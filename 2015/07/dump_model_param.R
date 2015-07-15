@@ -1,0 +1,8 @@
+library(nnet)
+m <- readRDS("benchmark_pfvc_model.rds")
+b <- matrix(m$param$b, nrow=1)
+B <- t(m$param$B)
+W <- unname(coef(m$param$m))
+write.table(b, "param/pop.dat", row.names=FALSE, col.names=FALSE)
+write.table(B, "param/subpop.dat", row.names=FALSE, col.names=FALSE)
+write.table(W, "param/marginal.dat", row.names=FALSE, col.names=FALSE)
