@@ -8,46 +8,65 @@ Author: Peter Schulam
 import numpy as np
 
 from scipy.optimize import minimize
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.cross_validation import KFold
 from mypy.models import softmax
 
 
-def train_adjustment(P, Q, QQaux, n_dev=4):
-    n    = P.shape[0]
-    Pmap = map_encode(P)
-    Qmap = map_encode(Q)
+def train_adjustment(P, Q, QQaux, n_dev=4, interp_groups=None):
+    n     = P.shape[0]
+    Pmap  = map_encode(P)
+    XXaux = [Qi[:, 1:] for Qi in QQaux]
 
-    XXaux = [np.c_[np.ones(n), Qi[:, 1:]] for Qi in QQaux]
-
-    QQdev = [np.zeros_like(Qmap) for _ in XXaux]
+    QQdev = [np.zeros_like(Q) for _ in XXaux]
     dev_folds = KFold(n, n_dev, shuffle=True, random_state=0)
     for i, (train, test) in enumerate(dev_folds):
         for j, Xj in enumerate(XXaux):
-            Wj = fit_multinomial(Pmap[train], Xj[train])
-            QQdev[j][test] = predict_multinomial(Wj, Xj[test])
+            cv  = KFold(train.size, 10, shuffle=True, random_state=0)
+            clf = LogisticRegressionCV(Cs=20, cv=cv, penalty='l2', solver='lbfgs', multi_class='multinomial')
+            clf.fit(Xj[train], np.argmax(P, axis=1)[train])
+            yhat = clf.predict(Xj[test])
+            QQdev[j][test] = clf.predict_proba(Xj[test])
 
     for i, _ in enumerate(QQdev):
         QQdev[i] = map_encode(QQdev[i])
 
-    weights = interpolate(P, [Qmap] + QQdev)
+    if interp_groups is None:
+        interp_groups = np.zeros(Pmap.shape[0])
 
-    WWaux = []
+    groups = np.unique(interp_groups)
+    weights = []
+    for g in groups:
+        ix = interp_groups == g
+        w  = interpolate(Pmap[ix], [Q[ix]] + [Qi[ix] for Qi in QQdev])
+        weights.append(w)
+
+    aux_clf = []
     for i, Xi in enumerate(XXaux):
-        Wi = fit_multinomial(Pmap, Xi)
-        WWaux.append(Wi)
+        cv  = KFold(n, 10, shuffle=True, random_state=0)
+        clf = LogisticRegressionCV(Cs=20, cv=cv, penalty='l2', solver='lbfgs', multi_class='multinomial')
+        clf.fit(Xi, np.argmax(P, axis=1))
+        aux_clf.append(clf)
 
-    return WWaux, weights
+    return aux_clf, weights
 
 
-def apply_adjustment(Q, QQaux, WWaux, weights):
-    n    = Q.shape[0]
-    Qmap = map_encode(Q)
-
-    XXaux = [np.c_[np.ones(n), Qi[:, 1:]] for Qi in QQaux]
-    QQmap = [predict_multinomial(Wi, Xi) for Wi, Xi in zip(WWaux, XXaux)]
+def apply_adjustment(Q, QQaux, aux_clf, weights, interp_groups=None):
+    n     = Q.shape[0]
+    XXaux = [Qi[:, 1:] for Qi in QQaux]
+    QQmap = [clf.predict_proba(Xi) for clf, Xi in zip(aux_clf, XXaux)]
     QQmap = [map_encode(Qi) for Qi in QQmap]
 
-    Qhat = interp_mixture(weights, [Qmap] + QQmap)
+    if interp_groups is None:
+        interp_groups = np.zeros(n)
+
+    Qhat = np.zeros_like(Q)
+    groups = np.unique(interp_groups)
+
+    for g in groups:
+        ix = interp_groups == g
+        w  = weights[g]
+        Qhat[ix] = interp_mixture(w, [Q[ix]] + [Qi[ix] for Qi in QQmap])
 
     return Qhat
 
