@@ -1,0 +1,236 @@
+\documentclass[12pt]{article}
+
+% Fonts
+\usepackage{helvet}
+\renewcommand{\rmdefault}{ptm}
+
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{booktabs}
+
+% Page geometry
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+
+% Paragraph spacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2ex plus 0.4ex minus 0.2ex}
+
+% Useful packages
+\usepackage{natbib}
+\usepackage{epsfig}
+\usepackage{url}
+\usepackage{bm}
+
+\newcommand{\T}{\top}
+\newcommand{\I}{{-1}}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\text{Var}}
+\newcommand{\Cov}{\text{Cov}}
+\newcommand{\given}{\mid}
+\newcommand{\hasdist}{\sim}
+\newcommand{\cN}{\mathcal{N}}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Z}{\mathbb{Z}}
+
+\newcommand{\psup}[1]{^{(#1)}}
+
+\title{Methods for Time-Dependent Adjustment of Longitudinal Trajectory Predictions\\(Working title)}
+\author{Peter Schulam}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Clinical markers indicate the health status of a given organ system, and are important sources of information used to drive management and treatment decisions. Examples of clinical markers include the percent of predicted forced vital capacity (PFVC), which clinicians use to monitor the progression of interstitial lung disease in patients with scleroderma. Accurate predictions of the future trajectory of clinical markers would be a valuable tool, as clinicians could anticipate future complications and treat the disease more aggressively.
+
+One way to predict future course is to construct a generative model of the longitudinally measured marker, estimate the model parameters, and, for a given history of observed measurements, compute the conditional distribution of future measurements under the estimated model. The generative approach to modeling and predicting longitudinally measured outcomes is attractive for a number of reasons. First, clinical data frequently has many missing measurements as observations are usually recorded at irregular time intervals. Second, computing the conditional distribution of future measurements given those observed so far under the joint model is a natural online prediction procedure in that it coherently absorbs new clinical information as it is recorded and updates forecasts.
+
+A drawback of the generative approach is that performance of the model is especially sensitive to the correctness of the assumptions underlying the formulation of the joint distribution. This weakness is particularly important to consider when attempting to incorporate other longitudinally recorded markers into our predictions. We may be able to improve our predictions by incorporating other information that is measured longitudinally. For example, other markers of lung function that are recorded when the patient undergoes a pulmonary function test may contain valuable information for detecting future decline in PFVC. In addition, if health across different organ systems is correlated, then markers measuring the status of, for example, the heart or kidneys may also be useful for improving predictions about PFVC. Unfortunately, incorporating such markers into a joint generative model is difficult because the statistical dependencies across markers can be complicated and challenging to model. This is especially true when working in complex systemic diseases where the disease is thought to be driven by a number of genetic and environmental factors that are poorly understood.
+
+In this work, we consider the problem of predicting the future values of a longitudinally measured outcome using previously observations of that outcome and previous observations of other longitudinally measured outcomes. We refer to the longitudinal process for which we are making predictions as the \emph{target} process, and we refer to the additional longitudinal processes used to inform our forecasts as \emph{auxiliary} processes. We use $\bm{y} \in \R^{|\bm{y}|}$ to denote vectors of target process measurements observed at times $\bm{t}$ (we use $|\bm{y}|$ to denote the number of elements in the vector). Similarly, we assume that there are $M$ auxiliary processes, and for each $m \in \{1, \ldots, M\}$ denote the vector of observed measurements and times using $\bm{y}_m$ and $\bm{t}_m$ respectively. We assume that we are learning from a database of such observation vectors, and use the superscript $i$ to indicate the individual to which a given vector belongs (i.e. $\bm{y}^i$ is the vector of observed target process measurements for individual $i$).
+
+\section{Related Work}
+
+The dominant approach to modeling longitudinal data is the mixed effects or hierarchical regression framework~\cite{Diggle2002-tt}. In a mixed effects model, a population regression model specifies the average trajectory. An individual trajectory is marginally centered around the population, but each individual is associated with a collection of latent random variables that parameterize an individual-specific adjustment to the population mean. Marginally, this induces correlation between observations from the same individual. Conditioned on the values of the latent variables, this produces an individual-specific mean trajectory.
+
+Recently, there has been increased interest in jointly modeling multiple longitudinal outcomes (see e.g.~\cite{Verbeke2014-cs,Fieuws2007-qo} for recent reviews). A common approach to jointly modeling longitudinal outcomes builds on the single-outcome mixed effects model. Each longitudinal outcome has a population mean trajectory and individuals have latent variables for each outcome that adjust the population trajectory. The dependence across outcomes is then determined by a joint distribution over the latent variables from each longitudinal process. This approach, while flexible, leads to complex models that are difficult to estimate. One can simplify the model by carefully designing the dependency structure across markers, but this requires a detailed understanding of the underlying phenomenon, which may not always be available. Another approach is to use latent class models (e.g.~\cite{Putter2008-gx}), which can reduce the number of parameters while still maintaining a relatively flexible dependency structure. \textbf{When we are interested only in using other longitudinally measured outcomes to improve predictions about a target outcome (e.g. PFVC), we suspect that assumptions about cross-outcome dependencies can be minimized because we are not seeking to describe the full generative process.} This note sketches a conceptual argument for two of methods for training online adjustments of a generative model to improve predictive accuracy of future longitudinal trajectories. 
+
+\section{Model}
+
+\textbf{We begin by describing a \emph{general} probabilistic model of the collection of longitudinal processes, which will help to motivate the approach we take to train a predictive model for the future course of the target process.} First, we assume that there is a vector of latent random variables associated with each longitudinal process, which we denote using $\bm{z}$ for the target process and $\bm{z}_m$ for each of the auxiliary processes. Conditioned on the associated vector of latent variables, the elements of a measurement vector are assumed to be statistically independent of one another:
+\begin{align}
+p(\bm{y} \given \bm{z}) = \prod_{j=1}^{|\bm{y}|} p( y_j \given \bm{z} ).
+\end{align}
+This general model describes traditional random effects models, latent class models, and more elaborate hierarchical models of longitudinal data such as~\cite{Schulam2015-ah}.
+
+The challenge in moving from a model of a single longitudinal outcome to a collection of outcomes is in specifying the dependencies between the latent variables. \textbf{Our goal is to use the fact that we care about \emph{prediction} and not joint inference to sidestep the process of determining the structure of the dependencies across longitudinal outcomes}. Therefore, we assume a fully general joint distribution over the latent random variables in our model. The joint distribution over observed marker values and latent random variables can be written as
+\begin{align}
+p(\bm{y}, \bm{y}_{1:M}, \bm{z}, \bm{z}_{1:M}) = p(\bm{z}, \bm{z}_{1:M}) p(\bm{y} \given \bm{z}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m).
+\end{align}
+
+Using this model, our interest is in obtaining forecasts of future target process measurements through the conditional density:
+\begin{align}
+\label{eq:predictive-density}
+p(y^* \given \bm{y}, \bm{y}_{1:M}) =
+	\sum_{\bm{z}} p(y^* \given \bm{z}) p(\bm{z} \given \bm{y}, \bm{y}_{1:M}).
+\end{align}
+In this predictive distribution, all information from the previously observed measurements from both the target and auxiliary processes is contained in the conditional density of the target process latent variables $\bm{z}$ given the observations in $\bm{y}$ and $\bm{y}_{1:M}$. By rewriting out this density using Bayes' rule we have:
+\begin{align}
+p(\bm{z} \given \bm{y}, \bm{y}_{1:M})
+	&\propto p(\bm{y} \given \bm{z}) p(\bm{z} \given \bm{y}_{1:M}) \\
+	&=       p(\bm{y} \given \bm{z}) \sum_{\bm{z}_{1:M}} p(\bm{z} \given \bm{z}_{1:M}) p(\bm{z}_{1:M} \given \bm{y}_{1:M}) \\
+	\label{eq:simplified-posterior}
+	&\propto p(\bm{y} \given \bm{z}) \sum_{\bm{z}_{1:M}} p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) p(\bm{z}_{1:M}).
+\end{align}
+
+If we knew the form of $p(\bm{z}, \bm{z}_{1:M})$, $p(\bm{y} \given \bm{z})$, and $p(\bm{y}_m \given \bm{z}_m)$, then we could estimate the parameters of the individual distributions using expectation maximization or through a Bayesian posterior. With the parameters of the distributions in hand, the conditional distribution over $\bm{z}$ in Equation \ref{eq:simplified-posterior} would be straightforward to compute (assuming that the sum is tractable) and we could easily compute the predictive distribution in Equation \ref{eq:predictive-density}.
+
+The form of the likelihoods of the observed measurements $p(\bm{y} \given \bm{z})$ and $p(\bm{y}_m \given \bm{z}_m)$ are relatively easy to determine as they capture the noise model of the observation process. For example, if we assume that $\bm{z}$ determines the individual's mean trajectory, then the likelihood may be a product of independent normals with shared variance and mean determined by the mean trajectory at the measurement time. The challenge is specifying the joint distribution over the latent variables as this entirely influences how information is transferred from observed auxiliary measurements to the distribution over the target latent variable. If this is misspecified, then conditional distribution in Equation $\ref{eq:simplified-posterior}$ can be severely biased. If we make the joint distribution too flexible or allow all dependencies, then it may be difficult to precisely estimate the parameters (this is a known challenge in estimating fully flexible multivariate normal joint distributions over the latent variables in multiple-outcome mixed effects models---see, for example, \cite{Yang2012-vg}).
+
+\section{Proposed Method}
+
+Our goal is to avoid the challenge of correctly specifying the joint distribution over the latent variables, and instead learn an approximation that still allows information to be transferred from auxiliary longitudinal measurements to the predictive distribution over the target measurements. We do this by first learning separate generative models for each of the longitudinal processes. For the target outcome and each auxiliary outcome, we estimate the parameters of:
+\begin{align}
+p(\bm{y} \given \bm{z}) p(\bm{z}).
+\end{align}
+Learning the parameters of this model will give us unbiased estimates of the parameters of the likelihood $p(\bm{y} \given \bm{z})$ for both the target and auxiliary longitudinal outcomes. The marginal of $p(\bm{z})$ may also be of interest, but we will not use it to compute the conditional distribution over the target latent variables given some observed measurements (Eq. \ref{eq:simplified-posterior}) because we would be making the strong assumption that the latent variables across markers are independent. Instead, we will estimate the distributions $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$ directly by maximizing a discriminative criterion.
+\begin{align}
+\label{eq:objective}
+J =
+\sum_{i=1}^N \log \left(
+	\sum_{\bm{z}_{1:M}} p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) p(\bm{z}_{1:M})
+\right).
+\end{align}
+We maximize the objective with respect to the conditional distribution \mbox{$p(\bm{z} \given \bm{z}_{1:M})$} and $p(\bm{z}_{1:M})$. The key idea is that we can choose approximations to these distributions whose parameters are maximized according to the discriminative criterion in Equation \ref{eq:objective}. The parameters will therefore be chosen in a way that best transfers information from the auxiliary markers to the target latent variables for the purpose of prediction. We first lower bound the objective using Jensen's inequality
+\begin{align}
+J &\ge \sum_{i=1}^N \sum_{\bm{z}_{1:M}} p(\bm{z}_{1:M}) \log \left( p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) \right) \\
+	&= \sum_{i=1}^N \E[\log p(\bm{z} \given \bm{Z}_{1:M})] + \sum_{m=1}^M \E[\log p(\bm{y}_m \given \bm{Z}_m)].
+\end{align}
+We can then maximize this lower bound with respect to the parameters of $p(z \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$.
+
+For the sake of concreteness, we work out an example application of this approach. Suppose that $\bm{z}$ and $\bm{z}_m$ indicate the \emph{subtype} that the individual belongs to for a given marker sequence. Subtypes are discrete subpopulations with distinct mean outcome trajectories. This is effectively a mixture model over longitudinal trajectories. The likelihood of observed marker sequences are entirely dependent on the marker-specific subtype, but there is an unknown dependency structure across outcome subtypes. Because the latent variables in this model are discrete, we can, in principle, parameterize the joint distribution $p(\bm{z}, \bm{z}_{1:M})$ as a saturated categorical distribution over all possible subtype combinations. This requires a number of parameters that is exponential in the number of longitudinal outcomes, however, and it will be difficult to reliably estimate them.
+
+\section{Methods}
+
+Our goal is to learn how to adjust posterior predictions given partial trajectories so that they more closely match the posteriors we observe given full trajectories. Let $\bm{P}$ denote the $N \times K$ matrix containing the posterior probabilities produced by the model given full trajectories. Each row $i$ of $\bm{P}$ contains the posterior probabilities of individual $i$ belonging to each subtype---the posterior probability that $i$ belongs to subtype $k$ is denoted $\bm{P}[i,k]$. Similarly, let $\bm{P}\psup{t}$ denote the matrix of posterior probabilities estimated after observing $t$ years of data.
+
+To measure the discrepancy two sets of posterior probabilities $\bm{P}$ and $\bm{Q}$, we use the average cross entropy (also known as perplexity).
+\begin{align}
+L(\bm{P}, \bm{Q}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{Q}[i,k].
+\end{align}
+If $\bm{P}$ is the ``truth'' and $\bm{Q}$ is some estimate of $\bm{P}$, then the cross entropy will be small if $\bm{Q}$ is a good approximation of $\bm{P}$. Note that the cross entropy loss is bounded from below by the average entropy of $\bm{P}$:
+\begin{align}
+L(\bm{P}, \bm{P}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{P}[i,k].
+\end{align}
+
+As we observe more data, the cross entropy between $\bm{P}$ and $\bm{P}\psup{t}$ will naturally decrease and eventually reach the lower bound once all data is observed. Our goal is to learn a model for producing an improved estimate $\bm{Q}$ that speeds up convergence to the lower bound. The key idea is to discriminately train a model at a given time instead of simply relying on the posterior probability under the generative model that was learned using complete trajectories.
+
+\section{Posterior Probability Scores}
+
+We first introduce the notion of scores, which are combined through the softmax function to create a probability distribution over outcomes. Let $s_{ik}$ denote the score indicating the compatibility between individual $i$ and subtype $k$, then we can produce a probability distribution over subtypes using the softmax function:
+\begin{align}
+Q_{ik} = \frac{ e^{s_{ik}} }{\sum_{k'=1}^K e^{s_{ik'}} }.
+\end{align}
+As is, this expression is under-constrained. We can obtain the same probability $\bm{Q}[i,k]$ by adding a constant to each of the scores. For this reason, we typically choose a \emph{pivot class} and constrain the score between each individual and the pivot class to be $0$. In this work, we will always use the first class (or subtype) as the pivot. After introducing this constraint, we can interpret the scores as representing the difference between each of the original scores and the score of the pivot class. Let $d_{ik}$ denote the constrained scores, then we have:
+\begin{align}
+d_{i1} &= s_{i1} - s_{i1} = 0 \\
+d_{i2} &= s_{i2} - s_{i1}     \\
+       &\vdots                \\
+d_{iK} &= s_{iK} - s_{i1}.
+\end{align}
+Our model will therefore predict the differences between the scores of the $K - 1$ classes and the pivot class.
+
+In the unadjusted case (i.e. when using the partial information posterior probabilities $\bm{P}\psup{t}$), the probabilities are computed as
+\begin{align}
+P_{ik} = \frac{p( y_i\psup{t} \given z_i = k ) p( z_i = k ) }
+			        { \sum_{k' = 1}^K p( y_i\psup{t} \given z_i = k' ) p( z_i = k' ) }.
+\end{align}
+By rewriting the expression for the posterior, we can obtain expressions for the scores associated with the generative model. First, by taking the log and exponential of the joint distribution we have:
+\begin{align}
+P_{ik} = \frac{ e^{\log p( y_i\psup{t} \given z_i = k ) + \log p( z_i = k )} }
+			        { \sum_{k' = 1}^K e^{ \log p( y_i\psup{t} \given z_i = k' ) + \log p( z_i = k' )} }.
+\end{align}
+We see that for the generative model, the unconstrained scores $s_{ik}$ are the log of the joint probability distribution over marker values and subtypes. By converting to the constrained scores $d_{ik}$, we see that
+\begin{align}
+d_{i1} &= \log \frac{p( y_i\psup{t} \given z_i = 1 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 1 )}{p( z_i = 1 )} = 0 \\
+d_{i2} &= \log \frac{p( y_i\psup{t} \given z_i = 2 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 2 )}{p( z_i = 1 )}     \\
+       &\vdots                                                                                                                      \\
+d_{iK} &= \log \frac{p( y_i\psup{t} \given z_i = K )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = K )}{p( z_i = 1 )}
+\end{align}
+The algorithms we propose in this note will seek to modify these scores using information from auxiliary markers---other longitudinally measured markers that are observed over the course of care.
+
+\section{Method 1}
+
+\textbf{This method does not work well, so the reader can skip to Method 2.}
+The first method modifies the constrained scores additively using features extracted from auxiliary marker streams. The features we use are obtained by computing posterior probabilities over subtypes. In the case of auxiliary markers, the subtypes are separate from the target marker's subtypes---we fit a subtype model for each auxiliary marker independently from the target marker. Let $M$ denote the number of auxiliary marker types available. For each auxiliary marker $m$, we estimate a subtype model with $K_m$ subtypes. Let $\bm{X}_m\psup{t}$ denote the $N \times K_m$ matrix of posterior probabilities over auxiliary subtypes for marker $m$ using data up until time $t$. We adjust the constrained scores using
+\begin{align}
+d^*_{ik} = d_{ik} + \sum_{m=1}^M \sum_{k'=1}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m[i,k'].
+\end{align}
+The posterior probabilities can be thought of as soft dummy encodings of a categorical feature (i.e. which subtype the individual belongs to for a given auxiliary marker). The coefficients $\bm{\theta}_{km}[k']$ can be approximately interpreted as the log ratio of the probability of the individual being in auxiliary subtype $k'$ if in target subtype $k$ and $1$. In other words, if a given auxiliary subtype is much more or much less prevalent in target subtype $k$ than in target subtype $1$ (the pivot), then the corresponding coefficient will have large absolute value (this is not entirely accurate, however, because the weights are trained discriminatively). The parameters $\bm{\theta}_{km}$ are estimated by minimizing the cross entropy loss. This is done using the same gradient based methods used to fit multinomial logistic regression (softmax) classifiers. Note that the original log-likelihood ratio $d_{ik}$ is unchanged in the learning procedure.
+
+One issue with this approach is that there are many features to estimate---a total of $K ( \sum_{m=1}^M K_m )$. We can reduce the number of parameters by noting that there may be many auxiliary subtypes that appear at comparable frequencies in target subtype $k$ and the pivot target subtype. We select which features to include in the model using a two-sided t-test of the difference between the probability of an auxiliary subtype under target subtype $k$ and target subtype $1$. Given a significance level $\alpha$, we include the feature if the difference in probabilities is statistically significant. This approach is meant as a heuristic; a more principled approach would use a proper regularizer such as the $L1$ penalty.
+
+\section{Method 2}
+
+The second method does not attempt to modify the posterior scores of the generative model. Instead, it leverages additional probabilistic models of an individual's subtype to create a new posterior distribution over subtypes. The new posterior is formed by averaging across the collection of models. The partial trajectory posteriors $\bm{P}\psup{t}$ obtained from the generative model are always included as the first model. Models of an individual's subtype that leverage additional sources of information such as other longitudinally observed markers can be added to the ensemble. In this exposition, we will use other longitudinally observed markers (henceforth referred to as auxiliary markers). Let $M$ denote the number of auxiliary markers. For each of the $M$ auxiliary markers, we train an independent subtype model---that is, we choose the covariates, number of subtypes, and hyper-parameters to model the marginal of auxiliary trajectories. For each auxiliary marker $m$, let $K_m$ denote the number of subtypes selected. At a given time $t$, we will use these marginal auxiliary models to make posterior estimates of the auxiliary subtype, which are gathered into the $N \times K_m$ matrix $\bm{X}_m\psup{t}$. We will use these posterior probabilities as features to train $M$ separate multinomial regression models over the \emph{target} subtype. For each marker $m$, we estimate the $K - 1$ scores:
+\begin{align}
+d_{mik} = \bm{\theta}_{km}[1] + \sum_{k'=2}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m\psup{t}[i,k'].
+\end{align}
+Note that the posterior probability of the first auxiliary subtype is not included in the model. If we did not remove it, the linear combination would be over-determined (the posterior probabilities sum to 1 and are therefore not linearly independent of the intercept term). The parameters are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). Given the parameters, we can predict posterior probabilities $\bm{Q}_m\psup{t}$ using
+\begin{align}
+\bm{Q}_m\psup{t}[i,k] = \frac{e^{d_{mik}}}{\sum_{k'=1}^K e^{d_{mik'}}}.
+\end{align}
+Given all of the separate predictions, we linearly interpolate them using weights $\bm{\pi}$ to produce the final posterior probability estimate:
+\begin{align}
+\bm{P}^* = \bm{\pi}[1] \bm{P}\psup{t} + \sum_{m=1}^M \bm{\pi}[m+1] \bm{Q}_m\psup{t}.
+\end{align}
+
+The interpolation weights are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). To avoid overfitting, this loss should be minimized on a held-out set of data because we want weights that will generalize to making predictions about posteriors that were not used to train the models in the ensemble. The interpolation weights are parameterized using $M$ real values $\nu_m \in \R$, which are passed through the softmax function to obtain the interpolation weights:
+\begin{align}
+\bm{\pi}(\vec{\nu})[1] &= \frac{1}{1 + \sum_{m'=1}^M e^{\nu_{m'}}} \\
+\bm{\pi}(\vec{\nu})[m + 1] &= \frac{e^{\nu_m}}{1 + \sum_{m' = 1}^M e^{\nu_{m'}}}.
+\end{align}
+Let $z_i$ be the MAP estimate according to the full information posterior $\bm{P}$ for individual $i$; i.e. $\bm{P}[i, z_i] \ge \bm{P}[i, z']$ for $z' \neq z_i$. We optimize the interpolation parameters by minimizing the log loss:
+\begin{align}
+J(\vec{\nu}) &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \bm{P}^*[i, z_i] \\
+             \nonumber
+             &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \left( \bm{\pi}(\vec{\nu})[1] \bm{P}\psup{t}[i, z_i] + \sum_{m=1}^M \bm{\pi}(\vec{\nu})[m + 1] \bm{Q}_m\psup{t}[i, z_i] \right).
+\end{align}
+We minimize this loss using the \texttt{BFGS} algorithm.
+
+\section{Next Steps}
+
+\begin{itemize}
+\item Separate the prior- and likelihood-based predictions terms in the interpolation.
+\item Other classifiers? Can we build features from the patient history to build a predictive model? I.e. how many clinical visits, how many ECHO visits, how many PFTs, which meds, etc.?
+\item Learning conditional interpolation weights? I.e. parameterize the softmax with features?
+\end{itemize}
+
+%\subsection{Results}
+%
+%\begin{figure}[b]
+%	\centering
+%	\begin{tabular}{lrr}
+%	\toprule
+%	{} &  entropy\_orig &  entropy\_adju \\
+%	\midrule
+%	censor\_time &               &               \\
+%	1           &      2.059643 &      1.760444 \\
+%	2           &      1.730074 &      1.477924 \\
+%	4           &      1.060079 &      0.941092 \\
+%	8           &      0.598221 &      0.587163 \\
+%	\bottomrule
+%	\end{tabular}
+%\end{figure}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
