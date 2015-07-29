@@ -4,6 +4,8 @@ import logging
 from scipy.optimize import minimize
 from scipy.misc import logsumexp
 
+import pdb
+
 
 class SubtypeModel:
     def __init__(self, penalty, models, seed=0, **options):
@@ -14,11 +16,11 @@ class SubtypeModel:
         self.solution = None
         self.options = options
 
-    def fit(self, training_data, sgd=None):
+    def fit(self, training_data):
         self.objective = ModelObjective(training_data, self.penalty, self.models, self.seed)
         w0 = self.objective.initial_weights()
         f = self.objective.value
-        g = lambda w: self.objective.gradient(w, sgd)
+        g = self.objective.gradient
         s = minimize(f, w0, jac=g, method='BFGS', options=self.options)
 
         self.solution = s
@@ -35,6 +37,11 @@ class SubtypeModel:
     def predict(self, histories):
         P = self.proba(histories)
         return np.argmax(P, axis=1)
+
+    def predict_features(self, histories):
+        junct_trees = [self.objective.engine.run(h) for h in histories]
+        features = np.array([feature_expectations(jt) for jt in junct_trees])
+        return features
 
 
 class ModelObjective:
@@ -56,10 +63,18 @@ class ModelObjective:
         n = 0
 
         for X, y in self.training_data:
+            if len(y[1][0][0]) < 1:
+                continue
             jt = self.engine.run(X)
-            lp = np.log(jt[1][0][y[0]])
-            n += 1            
-            v -= lp
+            lp = np.log(jt[1][0])
+            ll = self.scorer.data_scores(y[1])[0]
+            lj = lp + ll
+            v -= logsumexp(lj)
+            n += 1
+            
+            # lp = np.log(jt[1][0][y[0]])
+            # n += 1            
+            # v -= lp
 
         v /= n
         v += self.penalty / 2.0 * np.dot(w, w)
@@ -68,28 +83,36 @@ class ModelObjective:
             
         return v
 
-    def gradient(self, w, sgd=None):
+    def gradient(self, w):
         self.weights.set_weights(w)
+
+        #pdb.set_trace()
 
         g = np.zeros_like(w)
         n = 0
 
-        if sgd is None:
-            batch = self.training_data
-        else:
-            total = len(self.training_data)
-            indices = sorted(self.rnd.choice(total, sgd, replace=False))
-            batch = [self.training_data[i] for i in indices]
-
-        for X, y in batch:
+        for X, y in self.training_data:
+            if len(y[1][0][0]) < 1:
+                continue
             jt = self.engine.run(X)
-            jtc = self.engine.observe_target(jt, y[0])
+            lp = np.log(jt[1][0])
+            ll = self.scorer.data_scores(y[1])[0]
+            lj = lp + ll
+            wt = np.exp(lj - logsumexp(lj))
             
             fe = feature_expectations(jt)
-            fec = feature_expectations(jtc)
+            for i, _ in enumerate(wt):
+                jtc = self.engine.observe_target(jt, i)
+                fec = feature_expectations(jtc)
+                g += wt[i] * (fe - fec)  # We are computing the *negative* of the LL.
 
             n += 1
-            g += fe - fec  # We are computing the *negative* of the LL.
+            
+            # jtc = self.engine.observe_target(jt, y[0])
+            # fe = feature_expectations(jt)
+            # fec = feature_expectations(jtc)
+            # n += 1
+            # g += fe - fec  # We are computing the *negative* of the LL.
 
         g /= n
         g += self.penalty * w
@@ -98,6 +121,30 @@ class ModelObjective:
         
         return g
 
+
+def features(subtypes, num_subtypes):
+    specs = list(zip(subtypes, num_subtypes))
+    targ_spec, *aux_specs = specs
+
+    singleton = [singleton_features(s) for s in specs]
+    pairwise = [pairwise_features(targ_spec, s) for s in aux_specs]
+
+    return np.concatenate(singleton + pairwise)
+
+
+def singleton_features(subtype_spec):
+    z, k = subtype_spec
+    f = np.zeros(k)
+    f[z] = 1
+    return f
+
+
+def pairwise_features(target_spec, auxiliary_spec):
+    f1 = singleton_features(target_spec)
+    f2 = singleton_features(auxiliary_spec)
+    f = colvec(f1) * rowvec(f2)
+    return f.ravel()
+    
 
 def feature_expectations(junction_tree):
     _, s, p = junction_tree
@@ -421,18 +468,6 @@ def colvec(x):
 #     return features
 
 
-# def singleton_features(subtype_spec):
-#     z, k = subtype_spec
-#     f = np.zeros(k)
-#     f[z] = 1
-#     return f
-
-
-# def pairwise_features(target_spec, auxiliary_spec):
-#     f1 = singleton_features(target_spec)
-#     f2 = singleton_features(auxiliary_spec)
-#     f = colvec(f1) * rowvec(f2)
-#     return f.ravel()
 
 
 # def score(evidence_score, configuration_score):

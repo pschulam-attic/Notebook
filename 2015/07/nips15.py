@@ -37,6 +37,10 @@ class NipsModel:
         W = np.r_[ np.zeros((1, W.shape[1])), W ]
 
         return cls(b, B, W, bparam, kparam)
+
+    @property
+    def num_subtypes(self):
+        return self.k
         
     def phi1(self, x):
         return np.ones((x.size, 1))
@@ -152,8 +156,11 @@ class PatientData:
     def unpack(self):
         return self.t, self.x1, self.x2, self.y
 
-    def truncate(self, censor_time):
-        obs = self.t <= censor_time
+    def truncate(self, censor_time, after=False):
+        if after:
+            obs = self.t > censor_time
+        else:
+            obs = self.t <= censor_time
         return self.__class__(self.ptid, self.t[obs], self.y[obs], self.x1, self.x2)
 
     
