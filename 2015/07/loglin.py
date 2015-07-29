@@ -14,18 +14,19 @@ class SubtypeModel:
         self.solution = None
         self.options = options
 
-    def fit(self, training_data):
+    def fit(self, training_data, sgd=None):
         self.objective = ModelObjective(training_data, self.penalty, self.models, self.seed)
         w0 = self.objective.initial_weights()
-        self.solution = minimize(self.objective.value, w0,
-                                 jac=self.objective.gradient, method='BFGS',
-                                 options=self.options)
-        
-        self.objective.weights.set_weights(self.solution.x)
+        f = self.objective.value
+        g = lambda w: self.objective.gradient(w, sgd)
+        s = minimize(f, w0, jac=g, method='BFGS', options=self.options)
+
+        self.solution = s
+        self.objective.weights.set_weights(s.x)
 
     def proba(self, histories):
         junct_trees = [self.objective.engine.run(h) for h in histories]
-        return np.array(jt[0][0] for jt in junct_trees)
+        return np.array([jt[1][0] for jt in junct_trees])
 
     def log_proba(self, histories):
         P = self.proba(histories)
@@ -43,6 +44,7 @@ class ModelObjective:
         self.weights = ModelWeights([m.num_subtypes for m in models])
         self.scorer = Scorer(models, self.weights)
         self.engine = InferenceEngine(self.scorer)
+        self.rnd = np.random.RandomState(seed)
 
     def initial_weights(self):
         return self.weights.collapsed()
@@ -55,7 +57,7 @@ class ModelObjective:
 
         for X, y in self.training_data:
             jt = self.engine.run(X)
-            lp = np.log(jt[0][0][y])
+            lp = np.log(jt[1][0][y[0]])
             n += 1            
             v -= lp
 
@@ -66,15 +68,22 @@ class ModelObjective:
             
         return v
 
-    def gradient(self, w):
+    def gradient(self, w, sgd=None):
         self.weights.set_weights(w)
 
         g = np.zeros_like(w)
         n = 0
 
-        for X, y in self.training_data:
+        if sgd is None:
+            batch = self.training_data
+        else:
+            total = len(self.training_data)
+            indices = sorted(self.rnd.choice(total, sgd, replace=False))
+            batch = [self.training_data[i] for i in indices]
+
+        for X, y in batch:
             jt = self.engine.run(X)
-            jtc = self.engine.observe_target(jt, y)
+            jtc = self.engine.observe_target(jt, y[0])
             
             fe = feature_expectations(jt)
             fec = feature_expectations(jtc)
@@ -91,7 +100,7 @@ class ModelObjective:
 
 
 def feature_expectations(junction_tree):
-    s, p = junction_tree
+    _, s, p = junction_tree
     p = [p_i.ravel() for p_i in p[1:]]
     return np.concatenate(s + p)
 
@@ -119,7 +128,8 @@ class InferenceEngine:
             singletons[0] += marginalize(pairs[i], [0], logsumexp)
 
         # Normalize root (no further messages received)
-        singletons[0] -= logsumexp(singletons[0])
+        log_partition = logsumexp(singletons[0])
+        singletons[0] -= log_partition
 
         # Pass messages from root to leaves
         for i, p in enumerate(pairs[1:], 1):
@@ -137,10 +147,10 @@ class InferenceEngine:
         singletons = [np.exp(s) for s in singletons]
         pairs = [None] + [np.exp(p) for p in pairs[1:]]
 
-        return singletons, pairs
+        return log_partition, singletons, pairs
 
     def observe_target(self, junction_tree, target_subtype):
-        singletons, pairs = junction_tree
+        _, singletons, pairs = junction_tree
         singletons = [np.log(s) for s in singletons]
         pairs = [None] + [np.log(p) for p in pairs[1:]]
 
@@ -160,7 +170,7 @@ class InferenceEngine:
         singletons = [np.exp(s) for s in singletons]
         pairs = [None] + [np.exp(p) for p in pairs[1:]]
 
-        return singletons, pairs
+        return None, singletons, pairs
 
 
 class Scorer:
@@ -172,6 +182,22 @@ class Scorer:
     @property
     def parameters(self):
         return self.weights.collapsed()
+
+    def complete_score(self, histories, subtypes):
+        s = 0.0
+        
+        data_scores = self.data_scores(histories)
+        for y, ll in zip(subtypes, data_scores):
+            s += ll[y]
+
+        for i, z in enumerate(subtypes):
+            s += self.singleton_scores(i)[z]
+
+        z0 = subtypes[0]
+        for i, z in enumerate(subtypes[1:], 1):
+            s += self.pairwise_scores(i)[z0, z]
+
+        return s
 
     def data_scores(self, data):
         'Return log-likelihood scores for all marker-subtype combos.'
