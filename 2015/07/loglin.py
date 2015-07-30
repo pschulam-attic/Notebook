@@ -3,21 +3,23 @@ import itertools
 import logging
 from scipy.optimize import minimize
 from scipy.misc import logsumexp
-
-import pdb
+from scipy.cluster import hierarchy
+from scipy.spatial.distance import pdist
 
 
 class SubtypeModel:
-    def __init__(self, penalty, models, seed=0, **options):
+    def __init__(self, penalty, models, censor, seed=0, **options):
         self.penalty = penalty
         self.models = models
+        self.censor = censor
+        self.merges = [merge_subtypes(m, censor) for m in models]
         self.seed = seed
         self.objective = None
         self.solution = None
         self.options = options
 
     def fit(self, training_data):
-        self.objective = ModelObjective(training_data, self.penalty, self.models, self.seed)
+        self.objective = ModelObjective(training_data, self.penalty, self.models, self.merges, self.seed)
         w0 = self.objective.initial_weights()
         f = self.objective.value
         g = self.objective.gradient
@@ -44,8 +46,16 @@ class SubtypeModel:
         return features
 
 
+def merge_subtypes(model, censor):
+    b_censor = model.phi2(censor)
+    num_bases = np.nonzero(b_censor).max() + 1
+    distances = pdist(model.B[:, :num_bases], 'euclidean')
+    links = hierarchy.average(distances)
+    return links[:, :2]
+
+
 class ModelObjective:
-    def __init__(self, training_data, penalty, models, seed=0):
+    def __init__(self, training_data, penalty, models, merges, seed=0):
         self.training_data = training_data
         self.penalty = penalty
         self.weights = ModelWeights([m.num_subtypes for m in models])
@@ -73,7 +83,7 @@ class ModelObjective:
             n += 1
             
             # lp = np.log(jt[1][0][y[0]])
-            # n += 1            
+            # n += 1
             # v -= lp
 
         v /= n
@@ -122,6 +132,52 @@ class ModelObjective:
         return g
 
 
+class Features:
+    def __init__(self, num_subtypes, merges=None):
+        self.num_subtypes = num_subtypes
+        self.merges = merges
+        self.hierarchical = merges is not None
+
+    @property
+    def num_single_features(self):
+        h = self.hierarchical
+        s = [self.encode_single(0, 0, False).size]
+        s = s + [self.encode_single(0, i, h).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
+        return s
+
+    @property
+    def num_pair_features(self):
+        p = [self.encode_pair(0, 0, i, h).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
+        return p
+
+    @property
+    def num_features(self):
+        return self.num_single_features + self.num_pair_features
+
+    def encode(self, subtypes):
+        h = self.hierarchical
+        s = [self.encode_single(z, i, h) for i, z in enumerate(subtypes)]
+        p = [self.encode_pair(subtypes[0], z, i, h) for i, z in enumerate(subtypes[1:], 1)]
+        return np.concatenate(s + p)
+
+    def encode_single(self, z, index, hierarchical):
+        k = self.num_subtypes[index]
+        f = singleton_features((z, k))
+        
+        if self.hierarchical and hierarchical:
+            m = self.merges[index]            
+            f = single_to_hierarchical(f, m)
+
+        return f
+
+    def encode_pair(self, z_targ, z_aux, index_aux, hierarchical):
+        f1 = self.encode_single(z_targ, 0, False)
+        f2 = self.encode_single(z_aux, index_aux, hierarchical)
+        f = colvec(f1) * rowvec(f2)
+        f = f.ravel()
+        return f
+
+
 def features(subtypes, num_subtypes):
     specs = list(zip(subtypes, num_subtypes))
     targ_spec, *aux_specs = specs
@@ -130,6 +186,36 @@ def features(subtypes, num_subtypes):
     pairwise = [pairwise_features(targ_spec, s) for s in aux_specs]
 
     return np.concatenate(singleton + pairwise)
+
+
+def hierarchical_features(subtypes, num_subtypes, merges):
+    specs = list(zip(subtypes, num_subtypes))
+    targ_spec, *aux_specs = specs
+
+    singleton = [singleton_features(s) for s in specs]
+    singleton = singleton[:1] + [single_to_hierarchical(s, m) for s, m in zip(singleton[1:], merges[1:])]
+
+    pairwise = []
+    for s in singleton[1:]:
+        f = colvec(singleton[0]) * rowvec(s)
+        f = f.ravel()
+        pairwise.append(f)
+
+    return np.concatenate(singleton + pairwise)
+
+
+def single_to_hierarchical(singleton, merges):
+    k = singleton.size
+    m = merges.shape[0] - 1
+    f = np.zeros(k + m)
+    f[:k] = singleton
+    
+    for i in enumerate(merges[:-1]):
+        g1 = merges[i, 0]
+        g2 = merges[i, 1]
+        f[k + i] = f[g1] + f[g2]
+
+    return f
 
 
 def singleton_features(subtype_spec):
@@ -150,6 +236,29 @@ def feature_expectations(junction_tree):
     _, s, p = junction_tree
     p = [p_i.ravel() for p_i in p[1:]]
     return np.concatenate(s + p)
+
+
+def hierarchical_feature_expectations(junction_tree, merges):
+    _, singles, pairs = junction_tree
+
+    singleton = singles[:1] + [single_to_hierarchical(s, m) for s, m in zip(singles[1:], merges[1:])]
+
+    pairwise = []
+    for p, m in zip(pairs[1:], merges[1:]):
+        k = p.shape[1]
+        m = m.shape[0] - 1
+        f = np.zeros((p.shape[0], k + m))
+        f[:, :k] = p
+        
+        for i in enumerate(m[:-1]):
+            g1 = m[i, 0]
+            g2 = m[i, 1]
+            f[:, k + i] = f[:, g1] + f[:, g2]
+
+        f = f.ravel()
+        pairwise.append(f)
+
+    return np.concatenate(singleton + pairwise)
 
 
 class InferenceEngine:
@@ -269,12 +378,23 @@ class Scorer:
 
 
 class ModelWeights:
-    def __init__(self, num_subtypes, seed=0):
+    def __init__(self, feature_encoder, seed=0):
         self.num_subtypes = num_subtypes
+        self._initialize(seed)
+
+        self.feature_encoder = feature_encoder
         self._initialize(seed)
 
     def _initialize(self, seed):
         rnd = np.random.RandomState(seed)
+
+        n_singles = self.feature_encoder.num_singleton_features
+        self.singleton_ = [rnd.normal(size=n) for n in n_singles]
+
+        n_targ = n_singles[0]
+        n_pairs = self.feature_encoder.num_pair_features
+        self._pairwise = [rnd.normal(n).reshape((n_targ, -1)) for n in n_pairs]
+        self._pairwise = [None] + self.pairwise_
         
         self.singleton_ = [rnd.normal(size=n) for n in self.num_subtypes]
         
