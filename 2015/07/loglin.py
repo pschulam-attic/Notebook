@@ -5,11 +5,13 @@ from scipy.optimize import minimize
 from scipy.misc import logsumexp
 from scipy.cluster import hierarchy
 from scipy.spatial.distance import pdist
+from owlqn import OWLQN
 
 
 class SubtypeModel:
-    def __init__(self, penalty, models, censor, seed=0, **options):
+    def __init__(self, penalty, models, censor, regularizer='l2', seed=0, **options):
         self.penalty = penalty
+        self.regularizer = regularizer
         self.models = models
         self.censor = censor
         self.merges = [merge_subtypes(m, censor) for m in models]
@@ -19,14 +21,20 @@ class SubtypeModel:
         self.options = options
 
     def fit(self, training_data):
-        self.objective = ModelObjective(training_data, self.penalty, self.models, self.merges, self.seed)
+        self.objective = ModelObjective(training_data, self.penalty, self.regularizer, self.models, self.merges, self.seed)
         w0 = self.objective.initial_weights()
         f = self.objective.value
         g = self.objective.gradient
-        s = minimize(f, w0, jac=g, method='BFGS', options=self.options)
 
-        self.solution = s
-        self.objective.weights.set_weights(s.x)
+        if self.regularizer == 'l2':
+            s = minimize(f, w0, jac=g, method='BFGS', options=self.options)
+            self.solution = s
+            self.objective.weights.set_weights(s.x)
+            
+        elif self.regularizer == 'l1':
+            s = OWLQN(f, g, self.penalty, w0, **self.options).minimize()
+            self.solution = s
+            self.objective.weights.set_weights(s.x)
 
     def proba(self, histories):
         junct_trees = [self.objective.engine.run(h) for h in histories]
@@ -48,18 +56,20 @@ class SubtypeModel:
 
 def merge_subtypes(model, censor):
     b_censor = model.phi2(censor)
-    num_bases = np.nonzero(b_censor).max() + 1
+    num_bases = np.nonzero(b_censor)[0].max() + 1
     distances = pdist(model.B[:, :num_bases], 'euclidean')
     links = hierarchy.average(distances)
     return links[:, :2]
 
 
 class ModelObjective:
-    def __init__(self, training_data, penalty, models, merges, seed=0):
+    def __init__(self, training_data, penalty, regularizer, models, merges, seed=0):
         self.training_data = training_data
         self.penalty = penalty
-        self.weights = ModelWeights([m.num_subtypes for m in models])
-        self.scorer = Scorer(models, self.weights)
+        self.regularizer = regularizer
+        self.encoder = FeatureEncoder([m.num_subtypes for m in models], merges)
+        self.weights = ModelWeights(self.encoder)
+        self.scorer = Scorer(models, self.weights, self.encoder)
         self.engine = InferenceEngine(self.scorer)
         self.rnd = np.random.RandomState(seed)
 
@@ -87,9 +97,16 @@ class ModelObjective:
             # v -= lp
 
         v /= n
-        v += self.penalty / 2.0 * np.dot(w, w)
 
-        logging.info('Evaluated objective: f(w) = {:.08f}'.format(v))
+        if self.regularizer == 'l2':
+            v += self.penalty / 2.0 * np.dot(w, w)
+        elif self.regularizer == 'l1':
+            v += self.penalty * np.abs(w).sum()
+        else:
+            raise RuntimError('Regularizer {} not supported'.format(self.regularizer))
+
+        nz = (np.abs(w) > 0).sum()
+        logging.info('Evaluated objective: f(w) = {:.08f}, ||w||_0 = {}'.format(v, nz))
             
         return v
 
@@ -109,30 +126,40 @@ class ModelObjective:
             ll = self.scorer.data_scores(y[1])[0]
             lj = lp + ll
             wt = np.exp(lj - logsumexp(lj))
-            
-            fe = feature_expectations(jt)
+
+            fe = self.encoder.expected_encoding(jt)
             for i, _ in enumerate(wt):
                 jtc = self.engine.observe_target(jt, i)
-                fec = feature_expectations(jtc)
-                g += wt[i] * (fe - fec)  # We are computing the *negative* of the LL.
+                fec = self.encoder.expected_encoding(jtc)
+                g += wt[i] * (fe - fec)
 
             n += 1
-            
-            # jtc = self.engine.observe_target(jt, y[0])
-            # fe = feature_expectations(jt)
-            # fec = feature_expectations(jtc)
-            # n += 1
-            # g += fe - fec  # We are computing the *negative* of the LL.
 
         g /= n
-        g += self.penalty * w
+
+        if self.regularizer == 'l2':
+            g += self.penalty * w
+        elif self.regularizer == 'l1':
+            s = np.sign(w)
+            
+            is_zero = s == 0
+            can_reduce = g < -self.penalty
+            can_increase = g > self.penalty
+
+            s[is_zero & can_reduce] =  1.0
+            s[is_zero & can_increase] = -1.0
+
+            g += self.penalty * s
+        else:
+            raise RuntimError('Regularizer {} not supported'.format(self.regularizer))
+            
 
         logging.info('Evaluated gradient: ||g(w)||_inf = {:.08f}'.format(g.max()))
         
         return g
 
 
-class Features:
+class FeatureEncoder:
     def __init__(self, num_subtypes, merges=None):
         self.num_subtypes = num_subtypes
         self.merges = merges
@@ -147,7 +174,7 @@ class Features:
 
     @property
     def num_pair_features(self):
-        p = [self.encode_pair(0, 0, i, h).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
+        p = [self.encode_pair(0, 0, i).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
         return p
 
     @property
@@ -170,12 +197,29 @@ class Features:
 
         return f
 
-    def encode_pair(self, z_targ, z_aux, index_aux, hierarchical):
+    def encode_pair(self, z_targ, z_aux, index_aux):
         f1 = self.encode_single(z_targ, 0, False)
-        f2 = self.encode_single(z_aux, index_aux, hierarchical)
+        f2 = self.encode_single(z_aux, index_aux, True)
         f = colvec(f1) * rowvec(f2)
         f = f.ravel()
         return f
+
+    def expected_encoding(self, junction_tree):
+        _, ex_s, ex_p = junction_tree
+        
+        s = [e.copy() for e in ex_s]
+        p = ex_p[:1] + [e.copy() for e in ex_p[1:]]
+        
+        if self.hierarchical:
+            ex_s_m = zip(s[1:], self.merges[1:])
+            s = s[:1] + [single_to_hierarchical(e, m) for e, m in ex_s_m]
+        
+            ex_p_m = zip(p[1:], self.merges[1:])
+            p = p[:1] + [pair_to_hierarchical(e, m) for e, m in ex_p_m]
+
+        p = [e.ravel() for e in p[1:]]
+
+        return np.concatenate(s + p)
 
 
 def features(subtypes, num_subtypes):
@@ -210,12 +254,32 @@ def single_to_hierarchical(singleton, merges):
     f = np.zeros(k + m)
     f[:k] = singleton
     
-    for i in enumerate(merges[:-1]):
-        g1 = merges[i, 0]
-        g2 = merges[i, 1]
+    for i, merge in enumerate(merges[:-1]):
+        g1, g2 = merge
         f[k + i] = f[g1] + f[g2]
 
-    return f
+        # Collapse merged groups
+        f[g1] = 0.0
+        f[g2] = 0.0
+
+    return f[-2:]
+
+
+def pair_to_hierarchical(pair, merges):
+    k1, k2 = pair.shape
+    m = merges.shape[0] - 1
+    f = np.zeros((k1, k2 + m))
+    f[:, :k2] = pair
+
+    for i, merge in enumerate(merges[:-1]):
+        g1, g2 = merge
+        f[:, k2 + i] = f[:, g1] + f[:, g2]
+
+        # Collapse merged groups
+        f[:, g1] = 0.0
+        f[:, g2] = 0.0
+
+    return f[:, -2:]
 
 
 def singleton_features(subtype_spec):
@@ -330,30 +394,15 @@ class InferenceEngine:
 
 
 class Scorer:
-    def __init__(self, models, weights):
+    def __init__(self, models, weights, encoder):
         self.models = models
         self.weights = weights
+        self.encoder = encoder
         self.num_subtypes = weights.num_subtypes
 
     @property
     def parameters(self):
         return self.weights.collapsed()
-
-    def complete_score(self, histories, subtypes):
-        s = 0.0
-        
-        data_scores = self.data_scores(histories)
-        for y, ll in zip(subtypes, data_scores):
-            s += ll[y]
-
-        for i, z in enumerate(subtypes):
-            s += self.singleton_scores(i)[z]
-
-        z0 = subtypes[0]
-        for i, z in enumerate(subtypes[1:], 1):
-            s += self.pairwise_scores(i)[z0, z]
-
-        return s
 
     def data_scores(self, data):
         'Return log-likelihood scores for all marker-subtype combos.'
@@ -366,40 +415,49 @@ class Scorer:
 
     def singleton_scores(self, ix):
         'Return log-linear score for singleton features of marker `ix`.'
-        return self.weights.singleton(ix).copy()
+        w = self.weights.singleton(ix)
+        k = self.encoder.num_subtypes[ix]
+        s = np.zeros(k)
+        for z in range(k):
+            f = self.encoder.encode_single(z, ix, ix > 0)
+            s[z] = np.dot(w, f)
+
+        return s
 
     def pairwise_scores(self, ix):
         'Return log-linear score for pairwise features of marker `ix`.'
-        s = self.weights.pairwise(ix)
-        if s is None:
-            return s
+        w = self.weights.pairwise(ix)
+        
+        if w is None:
+            s = None
         else:
-            return s.copy()
+            k1 = self.encoder.num_subtypes[0]
+            k2 = self.encoder.num_subtypes[ix]
+            s = np.zeros((k1, k2))
+
+            for z1 in range(k1):
+                for z2 in range(k2):
+                    f = self.encoder.encode_pair(z1, z2, ix)
+                    s[z1, z2] = np.dot(w.ravel(), f)
+
+        return s
 
 
 class ModelWeights:
     def __init__(self, feature_encoder, seed=0):
-        self.num_subtypes = num_subtypes
-        self._initialize(seed)
-
         self.feature_encoder = feature_encoder
+        self.num_subtypes = feature_encoder.num_subtypes
         self._initialize(seed)
 
     def _initialize(self, seed):
         rnd = np.random.RandomState(seed)
 
-        n_singles = self.feature_encoder.num_singleton_features
+        n_singles = self.feature_encoder.num_single_features
         self.singleton_ = [rnd.normal(size=n) for n in n_singles]
 
         n_targ = n_singles[0]
         n_pairs = self.feature_encoder.num_pair_features
-        self._pairwise = [rnd.normal(n).reshape((n_targ, -1)) for n in n_pairs]
-        self._pairwise = [None] + self.pairwise_
-        
-        self.singleton_ = [rnd.normal(size=n) for n in self.num_subtypes]
-        
-        n_targ, *n_aux = self.num_subtypes
-        self.pairwise_ = [rnd.normal(size=(n_targ, n)) for n in n_aux]
+        self.pairwise_ = [rnd.normal(size=n).reshape((n_targ, -1)) for n in n_pairs]
         self.pairwise_ = [None] + self.pairwise_
 
     def singleton(self, ix):
@@ -418,25 +476,24 @@ class ModelWeights:
         singleton_offset = 0
         
         pairwise_ = []
-        pairwise_offset = sum(self.num_subtypes)
+        pairwise_offset = sum(s.size for s in self.singleton_)
 
-        for i, k in enumerate(self.num_subtypes):
-            # Read singleton weights
+        for i, s in enumerate(self.singleton_):
+            n = s.size
             i1 = singleton_offset
-            i2 = i1 + k
+            i2 = i1 + n
             w1 = flat_weights[i1:i2].copy()
             singleton_.append(w1)
-            singleton_offset += k
+            singleton_offset += n
 
-            # Read pairwise weights
             if i == 0:
                 w2 = None
             else:
-                k0 = self.num_subtypes[0]
+                n0 = self.singleton_[0].size
                 i1 = pairwise_offset
-                i2 = i1 + (k0 * k)
-                w2 = flat_weights[i1:i2].copy().reshape((k0, k))
-                pairwise_offset += (k0 * k)
+                i2 = i1 + (n0 * n)
+                w2 = flat_weights[i1:i2].copy().reshape((n0, n))
+                pairwise_offset += (n0 * n)
 
             pairwise_.append(w2)
 
