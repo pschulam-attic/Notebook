@@ -14,7 +14,8 @@ class SubtypeModel:
         self.regularizer = regularizer
         self.models = models
         self.censor = censor
-        self.merges = [merge_subtypes(m, censor) for m in models]
+        self.merges = [merge_subtypes(m) for m in models]
+        # self.merges = None
         self.seed = seed
         self.objective = None
         self.solution = None
@@ -54,10 +55,8 @@ class SubtypeModel:
         return features
 
 
-def merge_subtypes(model, censor):
-    b_censor = model.phi2(censor)
-    num_bases = np.nonzero(b_censor)[0].max() + 1
-    distances = pdist(model.B[:, :num_bases], 'euclidean')
+def merge_subtypes(model):
+    distances = pdist(model.B, 'euclidean')
     links = hierarchy.average(distances)
     return links[:, :2]
 
@@ -67,8 +66,8 @@ class ModelObjective:
         self.training_data = training_data
         self.penalty = penalty
         self.regularizer = regularizer
-        self.encoder = FeatureEncoder([m.num_subtypes for m in models], merges)
-        self.weights = ModelWeights(self.encoder)
+        self.encoder = FeatureEncoder([m.num_subtypes for m in models], 5, merges)
+        self.weights = ModelWeights(self.encoder, len(training_data[0][0][0][2]))
         self.scorer = Scorer(models, self.weights, self.encoder)
         self.engine = InferenceEngine(self.scorer)
         self.rnd = np.random.RandomState(seed)
@@ -127,10 +126,12 @@ class ModelObjective:
             lj = lp + ll
             wt = np.exp(lj - logsumexp(lj))
 
-            fe = self.encoder.expected_encoding(jt)
+            base_feats = X[0][2]
+
+            fe = self.encoder.expected_encoding(jt, base_feats)
             for i, _ in enumerate(wt):
                 jtc = self.engine.observe_target(jt, i)
-                fec = self.encoder.expected_encoding(jtc)
+                fec = self.encoder.expected_encoding(jtc, base_feats)
                 g += wt[i] * (fe - fec)
 
             n += 1
@@ -160,16 +161,18 @@ class ModelObjective:
 
 
 class FeatureEncoder:
-    def __init__(self, num_subtypes, merges=None):
+    def __init__(self, num_subtypes, num_baseline=0, merges=None):
         self.num_subtypes = num_subtypes
+        self.num_baseline = num_baseline
         self.merges = merges
         self.hierarchical = merges is not None
 
     @property
     def num_single_features(self):
+        x = np.array([0] * self.num_baseline)
         h = self.hierarchical
-        s = [self.encode_single(0, 0, False).size]
-        s = s + [self.encode_single(0, i, h).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
+        s = [self.encode_single(0, 0, x, False).size]
+        s = s + [self.encode_single(0, i, x, h).size for i, _ in enumerate(self.num_subtypes[1:], 1)]
         return s
 
     @property
@@ -181,45 +184,86 @@ class FeatureEncoder:
     def num_features(self):
         return self.num_single_features + self.num_pair_features
 
-    def encode(self, subtypes):
+    def encode(self, subtypes, base_feats=None):
         h = self.hierarchical
-        s = [self.encode_single(z, i, h) for i, z in enumerate(subtypes)]
+        s = [self.encode_single(z, i, base_feats, h) for i, z in enumerate(subtypes)]
         p = [self.encode_pair(subtypes[0], z, i, h) for i, z in enumerate(subtypes[1:], 1)]
         return np.concatenate(s + p)
 
-    def encode_single(self, z, index, hierarchical):
+    def encode_single(self, z, index, base_feats=None, hierarchical=False):
         k = self.num_subtypes[index]
         f = singleton_features((z, k))
-        
+
         if self.hierarchical and hierarchical:
             m = self.merges[index]            
             f = single_to_hierarchical(f, m)
 
+        if base_feats is not None:
+            x = np.asarray(base_feats).ravel()
+            f = colvec(f) * rowvec(x)
+            f = f.ravel()
+
         return f
 
     def encode_pair(self, z_targ, z_aux, index_aux):
-        f1 = self.encode_single(z_targ, 0, False)
-        f2 = self.encode_single(z_aux, index_aux, True)
+        k_targ = self.num_subtypes[0]
+        f1 = singleton_features((z_targ, k_targ))
+        
+        k_aux = self.num_subtypes[index_aux]
+        f2 = singleton_features((z_aux, k_aux))
+
         f = colvec(f1) * rowvec(f2)
+
+        if self.hierarchical:
+            f = pair_to_hierarchical(f, self.merges[index_aux])
+            
         f = f.ravel()
+        
         return f
 
-    def expected_encoding(self, junction_tree):
+    def expected_encoding(self, junction_tree, base_feats=None):
         _, ex_s, ex_p = junction_tree
-        
-        s = [e.copy() for e in ex_s]
-        p = ex_p[:1] + [e.copy() for e in ex_p[1:]]
-        
-        if self.hierarchical:
-            ex_s_m = zip(s[1:], self.merges[1:])
-            s = s[:1] + [single_to_hierarchical(e, m) for e, m in ex_s_m]
-        
-            ex_p_m = zip(p[1:], self.merges[1:])
-            p = p[:1] + [pair_to_hierarchical(e, m) for e, m in ex_p_m]
+        hierarchical = self.hierarchical
 
-        p = [e.ravel() for e in p[1:]]
+        s = []
+        for i, e in enumerate(ex_s):
+            f = e.copy()
+
+            if hierarchical and i > 0:
+                f = single_to_hierarchical(f, self.merges[i])
+            
+            if base_feats is not None:
+                x = np.asarray(base_feats).ravel()
+                f = colvec(f) * rowvec(x)
+                f = f.ravel()
+
+            s.append(f)
+
+        p = []
+        for i, e in enumerate(ex_p[1:], 1):
+            f = e.copy()
+
+            if hierarchical:
+                f = pair_to_hierarchical(f, self.merges[i])
+                
+            f = f.ravel()
+            p.append(f)
 
         return np.concatenate(s + p)
+        
+        # s = [e.copy() for e in ex_s]
+        # p = ex_p[:1] + [e.copy() for e in ex_p[1:]]
+        
+        # if self.hierarchical:
+        #     ex_s_m = zip(s[1:], self.merges[1:])
+        #     s = s[:1] + [single_to_hierarchical(e, m) for e, m in ex_s_m]
+        
+        #     ex_p_m = zip(p[1:], self.merges[1:])
+        #     p = p[:1] + [pair_to_hierarchical(e, m) for e, m in ex_p_m]
+
+        # p = [e.ravel() for e in p[1:]]
+
+        # return np.concatenate(s + p)
 
 
 def features(subtypes, num_subtypes):
@@ -248,38 +292,30 @@ def hierarchical_features(subtypes, num_subtypes, merges):
     return np.concatenate(singleton + pairwise)
 
 
-def single_to_hierarchical(singleton, merges):
+def single_to_hierarchical(singleton, merges, ngroups=2):
     k = singleton.size
-    m = merges.shape[0] - 1
+    m = merges.shape[0] - (ngroups - 1)
     f = np.zeros(k + m)
     f[:k] = singleton
     
-    for i, merge in enumerate(merges[:-1]):
+    for i, merge in enumerate(merges[:-(ngroups - 1)]):
         g1, g2 = merge
         f[k + i] = f[g1] + f[g2]
 
-        # Collapse merged groups
-        f[g1] = 0.0
-        f[g2] = 0.0
-
-    return f[-2:]
+    return f
 
 
-def pair_to_hierarchical(pair, merges):
+def pair_to_hierarchical(pair, merges, ngroups=2):
     k1, k2 = pair.shape
-    m = merges.shape[0] - 1
+    m = merges.shape[0] - (ngroups - 1)
     f = np.zeros((k1, k2 + m))
     f[:, :k2] = pair
 
-    for i, merge in enumerate(merges[:-1]):
+    for i, merge in enumerate(merges[:-(ngroups - 1)]):
         g1, g2 = merge
         f[:, k2 + i] = f[:, g1] + f[:, g2]
 
-        # Collapse merged groups
-        f[:, g1] = 0.0
-        f[:, g2] = 0.0
-
-    return f[:, -2:]
+    return f
 
 
 def singleton_features(subtype_spec):
@@ -332,10 +368,12 @@ class InferenceEngine:
     def run(self, data):
         'Return a junction tree.'
 
+        base_feat = data[0][2]
+
         # Initialize singleton clusters
         singletons = self.scorer.data_scores(data)
         for i, s in enumerate(singletons):
-            s += self.scorer.singleton_scores(i)
+            s += self.scorer.singleton_scores(i, base_feat)
 
         # Initialize pair clusters
         pairs = []
@@ -413,13 +451,13 @@ class Scorer:
 
         return scores
 
-    def singleton_scores(self, ix):
+    def singleton_scores(self, ix, base_feat=None):
         'Return log-linear score for singleton features of marker `ix`.'
         w = self.weights.singleton(ix)
         k = self.encoder.num_subtypes[ix]
         s = np.zeros(k)
         for z in range(k):
-            f = self.encoder.encode_single(z, ix, ix > 0)
+            f = self.encoder.encode_single(z, ix, base_feat, ix > 0)
             s[z] = np.dot(w, f)
 
         return s
@@ -455,7 +493,7 @@ class ModelWeights:
         n_singles = self.feature_encoder.num_single_features
         self.singleton_ = [rnd.normal(size=n) for n in n_singles]
 
-        n_targ = n_singles[0]
+        n_targ = self.num_subtypes[0]
         n_pairs = self.feature_encoder.num_pair_features
         self.pairwise_ = [rnd.normal(size=n).reshape((n_targ, -1)) for n in n_pairs]
         self.pairwise_ = [None] + self.pairwise_
@@ -489,11 +527,12 @@ class ModelWeights:
             if i == 0:
                 w2 = None
             else:
-                n0 = self.singleton_[0].size
+                k0 = self.num_subtypes[0]
+                k0, k1 = self.feature_encoder.encode_pair(0, 0, i).reshape((k0, -1)).shape
                 i1 = pairwise_offset
-                i2 = i1 + (n0 * n)
-                w2 = flat_weights[i1:i2].copy().reshape((n0, n))
-                pairwise_offset += (n0 * n)
+                i2 = i1 + (k0 * k1)
+                w2 = flat_weights[i1:i2].copy().reshape((k0, k1))
+                pairwise_offset += (k0 * k1)
 
             pairwise_.append(w2)
 
