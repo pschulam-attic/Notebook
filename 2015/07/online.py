@@ -6,179 +6,209 @@ Author: Peter Schulam
 '''
 
 import numpy as np
-
+import logging
 from scipy.optimize import minimize
-from sklearn.linear_model import LogisticRegressionCV
-from sklearn.cross_validation import KFold
-from mypy.models import softmax
+from scipy.misc import logsumexp
 
 
-def train_adjustment(P, Q, QQaux, n_dev=4, interp_groups=None):
-    n     = P.shape[0]
-    Pmap  = map_encode(P)
-    XXaux = [Qi[:, 1:] for Qi in QQaux]
+class OnlineAdjustment:
+    def __init__(self, model, penalty, seed=0):
+        self.model = model
+        self.penalty = penalty
+        self.seed = seed
 
-    QQdev = [np.zeros_like(Q) for _ in XXaux]
-    dev_folds = KFold(n, n_dev, shuffle=True, random_state=0)
-    for i, (train, test) in enumerate(dev_folds):
-        for j, Xj in enumerate(XXaux):
-            cv  = KFold(train.size, 10, shuffle=True, random_state=0)
-            clf = LogisticRegressionCV(Cs=20, cv=cv, penalty='l2', solver='lbfgs', multi_class='multinomial')
-            clf.fit(Xj[train], np.argmax(P, axis=1)[train])
-            yhat = clf.predict(Xj[test])
-            QQdev[j][test] = clf.predict_proba(Xj[test])
+    def fit(self, training_data, w0=None, **options):
+        self.objective = OnlineLoss(training_data, self.model, self.penalty)
+        f = self.objective.value
+        g = self.objective.gradient
 
-    for i, _ in enumerate(QQdev):
-        QQdev[i] = map_encode(QQdev[i])
+        if w0 is None:
+            num_feat = self.objective.encoder.num_features
+            w0 = np.ones(num_feat)
+            #w0 = np.random.RandomState(self.seed).normal(size=num_feat)
+            
+        self.solution = minimize(f, w0, jac=g, method='BFGS', options=options)
+        self.w = self.solution.x
 
-    if interp_groups is None:
-        interp_groups = np.zeros(Pmap.shape[0])
+        return self
 
-    groups = np.unique(interp_groups)
-    weights = []
-    for g in groups:
-        ix = interp_groups == g
-        w  = interpolate(Pmap[ix], [Q[ix]] + [Qi[ix] for Qi in QQdev])
-        weights.append(w)
+    def proba(self, histories):
+        p = [self.objective.engine.run(X, self.w) for X in histories]
+        return np.array(p)
 
-    aux_clf = []
-    for i, Xi in enumerate(XXaux):
-        cv  = KFold(n, 10, shuffle=True, random_state=0)
-        clf = LogisticRegressionCV(Cs=20, cv=cv, penalty='l2', solver='lbfgs', multi_class='multinomial')
-        clf.fit(Xi, np.argmax(P, axis=1))
-        aux_clf.append(clf)
-
-    return aux_clf, weights
+    def log_proba(self, histories):
+        p = self.proba(histories)
+        return np.log(p)
 
 
-def apply_adjustment(Q, QQaux, aux_clf, weights, interp_groups=None):
-    n     = Q.shape[0]
-    XXaux = [Qi[:, 1:] for Qi in QQaux]
-    QQmap = [clf.predict_proba(Xi) for clf, Xi in zip(aux_clf, XXaux)]
-    QQmap = [map_encode(Qi) for Qi in QQmap]
-
-    if interp_groups is None:
-        interp_groups = np.zeros(n)
-
-    Qhat = np.zeros_like(Q)
-    groups = np.unique(interp_groups)
-
-    for g in groups:
-        ix = interp_groups == g
-        w  = weights[g]
-        Qhat[ix] = interp_mixture(w, [Q[ix]] + [Qi[ix] for Qi in QQmap])
-
-    return Qhat
-
-
-def fit_multinomial(P, X):
-    k = P.shape[1]
-    d = X.shape[1]
-    W0 = np.zeros((k, d))
-
-    def f(w):
-        W = w.reshape(W0.shape)
-        y = [softmax.regression_ll(x, y, W) for x, y in zip(X, P)]
-        return -sum(y)
-
-    def g(w):
-        W = w.reshape(W0.shape)
-        y = [softmax.regression_ll_grad(x, y, W) for x, y in zip(X, P)]
-        y = -sum(y)
-        return y.ravel()
-
-    s = minimize(f, W0.ravel(), jac=g, method='BFGS')
-
-    if not s.success:
-        raise RuntimeError('Multinomial fit optimization failed.')
-
-    W = s.x.reshape(W0.shape)
-
-    return W
-
-
-def predict_multinomial(W, X):
-    P = np.array([softmax.regression_proba(x, W) for x in X])
-    return P    
-
-
-def interpolate(P, QQ, seed=1):
-    '''Estimate interpolation weights of distributions in QQ to minimize
-    cross-entropy under P.
-
-    Author: Peter Schulam
-
-    '''
-    rnd = np.random.RandomState(seed)
-    
-    M    = len(QQ)
-    v    = rnd.normal(size=M)
-    v[0] = 0.0
-    
-    obj = lambda x: interp_perplexity(P, QQ, x)
-    jac = lambda x: interp_perplexity_jac(P, QQ, x)
-    sol = minimize(obj, v, jac=jac, method='BFGS')
-    
-    if not sol.success:
-        raise RuntimeError('Interpolation optimization failed.')
-    
-    w = softmax.softmax_func(sol.x)
-
-    return w
-
-
-def interp_perplexity(P, QQ, v):
-    '''Compute cross-entropy of interpolated distributions under P.
-
-    Author: Peter Schulam
-
-    '''
-    w = softmax.softmax_func(v)
-    Q = interp_mixture(w, QQ)
-    return - np.sum(P * np.log(Q)) / P.shape[0]
-
-
-def interp_perplexity_jac(P, QQ, v):
-    '''Compute the jacobian of the cross-entropy with respect to `v`.
-
-    Author: Peter Schulam
-
-    '''
-    M = v.size
-    w = softmax.softmax_func(v)
-    Q = interp_mixture(w, QQ)
-    
-    dp_dw = np.zeros(M)
-    for m in range(M):
-        dp_dw[m] = np.sum(P * QQ[m] / Q)
+class OnlineLoss:
+    def __init__(self, training_data, model, penalty):
+        self.training_data = training_data
+        self.model = model
+        self.penalty = penalty
+        self.encoder = OnlineFeatureEncoder(model)
+        self.engine = InferenceEngine(self.encoder)
         
-    dw_dv = -softmax.softmax_grad(v)
-    
-    return np.dot(dp_dw, dw_dv) / P.shape[0]
+    def value(self, w):
+        v = 0.0
+        n = 0
+
+        for X, y in self.training_data:
+            if len(y[1][0][0]) < 1:
+                continue
+
+            lp = np.log(self.engine.run(X, w))
+            ll = self.model.likelihood(*y[1][0])
+            v -= logsumexp(lp + ll)
+            n += 1
+
+        v /= n
+        v += self.penalty / 2.0 * np.dot(w, w)
+
+        logging.info('f(w) = {:.06f}'.format(v))
+
+        return v
+
+    def gradient(self, w):
+        g = np.zeros_like(w)
+        n = 0
+
+        for X, y in self.training_data:
+            if len(y[1][0][0]) < 1:
+                continue
+
+            lp = np.log(self.engine.run(X, w))
+            ll = self.model.likelihood(*y[1][0])
+            lj = lp + ll
+            wt = np.exp(lj - logsumexp(lj))
+
+            logging.debug('Predicted {}'.format(np.round(np.exp(lp), 2)))
+            logging.debug('Posterior {}'.format(np.round(wt, 2)))
+
+            f_exp = self.encoder.expected_encoding(np.exp(lp), X)
+            g_i = f_exp
+            for z, _ in enumerate(wt):
+                f_obs = self.encoder.encode(z, X)
+                g_i -= wt[z] * f_obs
+                # g += wt[z] * (f_exp - f_obs)
+
+            logging.debug('Gradient {}'.format(np.round(g_i, 2)))
+
+            g += g_i
+            n += 1
+
+        g /= n
+        g += self.penalty * w
+
+        logging.info('||g(w)||_inf = {:.06f}'.format(g.max()))
+
+        return g
 
 
-def interp_mixture(w, QQ):
-    '''Compute the interpolated distribution.
+class OnlineFeatureEncoder:
+    def __init__(self, model):
+        self.num_subtypes = model.num_subtypes
+        self.model = model
 
-    Author: Peter Schulam
+    @property
+    def num_features(self):
+        # return 2
+        return 2 * self.num_subtypes
 
-    '''
-    Q = np.zeros_like(QQ[0])
-    for wi, Qi in zip(w, QQ):
-        Q += wi * Qi
-    return Q
+    @property
+    def num_outputs(self):
+        return self.num_subtypes
+
+    # def encode(self, z, history):
+    #     'Single weight encoding.'
+    #     d = history[0]
+    #     lp = self.model.prior(*d)
+    #     ll = self.model.likelihood(*d)
+
+    #     f = np.zeros(2)
+    #     f[0] = lp[z]
+    #     f[1] = ll[z]
+
+    #     return f
+
+    def encode(self, z, history):
+        'Likelihood ratio encoding.'
+        d = history[0]
+        lp = self.model.prior(*d)
+        ll = self.model.likelihood(*d)
+
+        lpr = lp - lp[0]
+        llr = ll - ll[0]
+
+        k = self.num_subtypes
+        f = np.zeros(2 * k)
+        f[z] = lpr[z]
+        f[k + z] = llr[z]
+
+        return f
+
+    # def encode(self, z, history):
+    #     d = history[0]
+    #     lp = self.model.prior(*d)
+    #     ll = self.model.likelihood(*d)
+
+    #     k = self.num_subtypes
+    #     f = np.zeros(2 * k)
+    #     f[z] = lp[z]
+    #     f[k + z] = ll[z]
+
+    #     return f
+
+    # def expected_encoding(self, pz, history):
+    #     'Single weight encoding.'
+    #     d = history[0]
+    #     lp = self.model.prior(*d)
+    #     ll = self.model.likelihood(*d)
+
+    #     f = np.zeros(2)
+    #     f[0] = (pz * lp).sum()
+    #     f[1] = (pz * ll).sum()
+
+    #     return f
+
+    def expected_encoding(self, pz, history):
+        'Likelihood ratio encoding.'
+        d = history[0]
+        lp = self.model.prior(*d)
+        ll = self.model.likelihood(*d)
+
+        lpr = lp - lp[0]
+        llr = ll - ll[0]
+
+        k = self.num_subtypes
+        f = np.zeros(2 * k)
+        f[:k] = pz * lpr
+        f[k:] = pz * llr
+
+        return f
+
+    # def expected_encoding(self, pz, history):
+    #     d = history[0]
+    #     lp = self.model.prior(*d)
+    #     ll = self.model.likelihood(*d)
+
+    #     k = self.num_subtypes
+    #     f = np.zeros(2 * k)
+    #     f[:k] = pz * lp
+    #     f[k:] = pz * ll
+
+    #     return f
 
 
-def map_encode(P, eps=1e-2):
-    '''Compute a new distribution in each row that is dominated by the MAP
-    in the original.
+class InferenceEngine:
+    def __init__(self, encoder):
+        self.encoder = encoder
 
-    Author: Peter Schulam
-
-    '''
-    cx = np.argmax(P, axis=1)
-    rx = list(range(P.shape[0]))
-    Q  = eps * np.ones_like(P)
-    Q[rx, cx] = 1
-    Q /= Q.sum(axis=1)[:, np.newaxis]
-    return Q
+    def run(self, history, w):
+        s = np.zeros(self.encoder.num_outputs)
+        for z, _ in enumerate(s):
+            f = self.encoder.encode(z, history)
+            s[z] = np.dot(f, w)
+        p = np.exp(s - logsumexp(s))
+        
+        return p
