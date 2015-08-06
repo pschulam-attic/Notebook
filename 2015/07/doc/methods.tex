@@ -63,7 +63,7 @@ A drawback of the generative approach is that performance of the model is especi
 In this work, we consider the problem of predicting the future values of a longitudinally measured outcome using previous observations of that outcome and previous observations of other longitudinally measured outcomes. We refer to the longitudinal process for which we are making predictions as the \emph{target} process, and we refer to the additional longitudinal outcomes used to inform our forecasts as \emph{auxiliary} processes. We use $\bm{y} \in \R^{|\bm{y}|}$ to denote vectors of target process measurements observed at times $\bm{t}$ (we use $|\bm{y}|$ to denote the number of elements in the vector). Similarly, we assume that there are $M$ auxiliary processes, and for each $m \in \{1, \ldots, M\}$ we denote the vector of observed measurements and times using $\bm{y}_m$ and $\bm{t}_m$ respectively. We assume that we are learning from a database of such observation vectors, and use the superscript $i$ to indicate the individual to which a given vector belongs (i.e. $\bm{y}^i$ is the vector of observed target process measurements for individual $i$). For a given time $t$, we use $\bm{y}[\le t]$ to denote the vector of observations that have been recorded prior or at time $t$. Let $y^*$ denote the value of a measurement of the target longitudinal process at some time $t^* > t$, then our goal is to learn a model of the conditional distribution:
 \begin{align}
 \label{eq:target-conditional-distribution}
-p(y^* \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]),
+p(y_* \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]),
 \end{align}
 where we have suppressed explicit dependence on the measurement times $\bm{t}$ and $\bm{t}_{1:M}$ (and will continue to do so for the remainder of the paper). Our approach builds upon a flexible latent variable model that generalizes many of the approaches to joint analysis of multiple longitudinal outcomes. The primary contribution of our work is the formulation of an estimator for the conditional distribution in Equation \ref{eq:target-conditional-distribution} that is based upon the flexible joint latent variable model, but is estimated in a way that is robust to misspecification of the dependencies across longitudinal processes.
 
@@ -84,15 +84,15 @@ p(\bm{y}, \bm{y}_{1:M}, \bm{z}, \bm{z}_{1:M}) = p(\bm{z}, \bm{z}_{1:M}) p(\bm{y}
 Under this joint model, we can write the target conditional distribution in Equation \ref{eq:target-conditional-distribution} as:
 \begin{align}
 \label{eq:predictive-density}
-p(y^* \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]) =
-	\sum_{\bm{z}} p(y^* \given \bm{z}) p(\bm{z} \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]).
+p(y_* \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]) =
+	\sum_{\bm{z}} p(y_* \given \bm{z}) p(\bm{z} \given \bm{y}[\le t], \bm{y}_{1:M}[\le t]).
 \end{align}
-In this conditional distribution, all information from the previously observed measurements from both the target and auxiliary processes is conveyed through the conditional density of the target process latent variables $\bm{z}$ given the observations in $\bm{y}[\le t]$ and $\bm{y}_{1:M}[\le t]$. This ``bottleneck'' suggests a natural strategy: directly estimate a time-dependent conditional probabilistic model of the target latent variables given previously observed measurements from both the target and auxiliary longitudinal processes. It's not immediately clear how such a model would be trained. One approach would be to marginalize over the target latent variables and directly maximize the probability of future measurements on training data. An alternative approach, and the one used here, is to train the model to match the latent variables that best explain the complete set of target measurements without conditioning on auxiliary process measurements. In other words, for each individual $i$ in the training data, the response we fit is
+In this conditional distribution, all information from the previously observed measurements from both the target and auxiliary processes is conveyed through the conditional density of the target process latent variables $\bm{z}$ given the observations in $\bm{y}[\le t]$ and $\bm{y}_{1:M}[\le t]$. This ``bottleneck'' suggests a natural strategy: directly estimate a time-dependent conditional probabilistic model of the target latent variables given previously observed measurements from both the target and auxiliary longitudinal processes. We train the model to match the latent variables that best explain the complete set of target measurements without conditioning on auxiliary process measurements. In other words, for each individual $i$ in the training data, the response we fit is
 \begin{align}
-\bm{z}^*_i = \argmax_{\bm{z}} p(\bm{y}_i \given \bm{z}) p(\bm{z}).
+\bm{z}^i_* = \argmax_{\bm{z}} p(\bm{y}_i \given \bm{z}) p(\bm{z}).
 \end{align}
 
-The process of formulating such a conditional model, however, is not straightforward. The main challenge is that the processes can each be measured at different schedules. Moreover, the times at which measurements are recorded within a given process may be irregularly spaced. This creates a missing data problem, and makes it impossible to rely on measurements being available at fixed times that can be used as direct inputs or to extract features for the model. Indeed, this is one of the strengths of the generative approach. Missing observations are easily marginalized and only observed measurements contribute to the conditional distribution. In the joint latent variable model, we can rewrite the conditional distribution over $\bm{z}$ in Equation \ref{eq:predictive-density} using Bayes' rule to see how information from the observed measurements of the auxiliary longitudinal processes are summarized through the associated latent variables:
+The process of formulating such a conditional model, however, is not straightforward. The main challenge is that the processes can each be measured at different schedules. Moreover, the times at which measurements are recorded within a given process may be irregularly spaced. This creates a missing data problem, and makes it impossible to rely on measurements being available at fixed times that can be used as direct inputs or to extract features for the model. Indeed, this is one of the strengths of the generative approach. Missing observations are easily marginalized and only observed measurements contribute to the conditional distribution. In the joint latent variable model, we can rewrite the conditional distribution over $\bm{z}$ in Equation \ref{eq:predictive-density} using Bayes' rule to see how information from the observed measurements of the auxiliary longitudinal processes are summarized through the associated latent variables under the general model we've described above:
 \begin{align}
 \label{eq:target-latent-variable-predictive}
 p(\bm{z} \given \bm{y}[\le t], \bm{y}_{1:M}[\le t])
@@ -103,36 +103,125 @@ p(\bm{z} \given \bm{y}[\le t], \bm{y}_{1:M}[\le t])
 	&\propto
 		p(\bm{y}[\le t] \given \bm{z})
 		\sum_{\bm{z}_{1:M}}
-			\overbrace{p(\bm{z} \given \bm{z}_{1:M})}^{\text{latent variable compatibility}}
-			\underbrace{\prod_{m=1}^M p(\bm{y}_m[\le t] \given \bm{z}_m)}_{\text{info. transfer from aux.}}
-			p(\bm{z}_{1:M}).
+			\overbrace{p(\bm{z}, \bm{z}_{1:M})}^{\text{latent variable compatibility}}
+			\underbrace{\prod_{m=1}^M p(\bm{y}_m[\le t] \given \bm{z}_m)}_{\text{info. transfer from aux.}}.
 \end{align}
-The generative approach therefore naturally solves the challenge of missing data, but the issue of specifying the relationship between the latent variables remains (i.e. choosing the forms of the distributions $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$). To resolve this issue, we take an approach wherein we estimate the components of Equation \ref{eq:joint-latent-variable-conditional} using two separate procedures. First, the parameters of the conditional distributions of the observed measurements given the latent variables are estimated using a generative criterion. Second, the parameters of $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$ are estimated by maximizing a discriminative objective. \textbf{The primary motivation for this approach is that a misspecification of the distributions over the latent variables will be less harmful if estimated discriminatively than if they are estimated in a generative criterion.}
+The final line above sheds some light on how information should be passed from auxiliary markers to the target latent variables. On the far right, we see that evidence for each of the auxiliary latent variables given the observed auxiliary measurements should come from the likelihood function. Interestingly, the parameters of these likelihood functions can be estimated by independently fitting individual joint models over $\bm{y}_m$ and $\bm{z}_m$. Second from the right, we see that there should be some form of compatibility function between the set of latent random variables. \textbf{The proposed approach will learn this compatibility function discriminatively. Such an estimate should be more robust to misspecification than if an assumed probability distribution over the latent random variables is learned using a generative criterion.}
 
-%We note that more difficult challenge is specifying the joint distribution over the auxiliary process latent variables $p(\bm{z}_{1:M})$ as it's unclear how it should be factorized and simplified. On the other hand, the conditional distribution $p(\bm{z} \given \bm{z}_{1:M})$ is slightly less challenging because we can simply assume that $\bm{z}$ depends on all auxiliary latent variables. The issue here becomes choosing a parameterization of the conditional distribution that is sufficiently flexible to roughly capture the functional form of the dependencies.
+\subsection{Proposed Approach}
 
-\section{Methods}
-
-Our goal is to avoid the challenge of correctly specifying the joint distribution over the latent variables, and instead learn an approximation that still allows information to be transferred from auxiliary longitudinal measurements to the predictive distribution over the target measurements. We do this by first learning separate generative models for each of the longitudinal processes. For the target outcome and each auxiliary outcome, we estimate the parameters of:
+Our strategy will be to reformulate Equation \ref{eq:joint-latent-variable-conditional} as a log-linear model. This is easily done by using a log-linear parameterization for the joint model $p(\bm{z}, \bm{z}_{1:M})$. Let $g(\bm{z}, \bm{z}_{1:M}) \in \R^d$ denote a feature vector, and let $\bm{w} \in \R^d$ denote a weight vector. We assume that:
 \begin{align}
-p(\bm{y} \given \bm{z}) p(\bm{z}).
+p_{\bm{w}}(\bm{z}, \bm{z}_{1:M}) \propto \bm{w}^\T g(\bm{z}, \bm{z}_{1:M}).
 \end{align}
-Learning the parameters of this model will give us unbiased estimates of the parameters of the likelihood $p(\bm{y} \given \bm{z})$ for both the target and auxiliary longitudinal outcomes. The marginal of $p(\bm{z})$ may also be of interest, but we will not use it to compute the conditional distribution over the target latent variables given some observed measurements (Eq. \ref{eq:simplified-posterior}) because we would be making the strong assumption that the latent variables across markers are independent. Instead, we will estimate the distributions $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$ directly by maximizing a discriminative criterion.
+Note that the normalization constant $Z(\bm{w})$ does not depend on $\bm{z}$ or $\bm{z}_{1:M}$ and so we can further simplify Equation \ref{eq:joint-latent-variable-conditional} after assuming the log-linear parameterization:
 \begin{align}
-\label{eq:objective}
-J =
-\sum_{i=1}^N \log \left(
-	\sum_{\bm{z}_{1:M}} p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) p(\bm{z}_{1:M})
-\right).
+p(\bm{z} \given & \bm{y}[\le t], \bm{y}_{1:M}[\le t]) \\
+&\propto p(\bm{y}[\le t] \given \bm{z}) \sum_{\bm{z}_{1:M}} \frac{e^{\bm{w}^\T g(\bm{z}, \bm{z}_{1:M})}}{Z(\bm{w})} \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) \\
+&\propto p(\bm{y}[\le t] \given \bm{z}) \sum_{\bm{z}_{1:M}} e^{\bm{w}^\T g(\bm{z}, \bm{z}_{1:M})} \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) \\
+&= \sum_{\bm{z}_{1:M}} \exp \left\{ \log p(\bm{y}[\le t] \given \bm{z}) + \sum_{m=1}^M \log p(\bm{y}_m[\le t] \given \bm{z}_m) + \bm{w}^\T g(\bm{z}, \bm{z}_{1:M}) \right\}.
 \end{align}
-We maximize the objective with respect to the conditional distribution \mbox{$p(\bm{z} \given \bm{z}_{1:M})$} and $p(\bm{z}_{1:M})$. The key idea is that we can choose approximations to these distributions whose parameters are maximized according to the discriminative criterion in Equation \ref{eq:objective}. The parameters will therefore be chosen in a way that best transfers information from the auxiliary markers to the target latent variables for the purpose of prediction. We first lower bound the objective using Jensen's inequality
-\begin{align}
-J &\ge \sum_{i=1}^N \sum_{\bm{z}_{1:M}} p(\bm{z}_{1:M}) \log \left( p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) \right) \\
-	&= \sum_{i=1}^N \E[\log p(\bm{z} \given \bm{Z}_{1:M})] + \sum_{m=1}^M \E[\log p(\bm{y}_m \given \bm{Z}_m)].
-\end{align}
-We can then maximize this lower bound with respect to the parameters of $p(z \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$.
 
-For the sake of concreteness, we work out an example application of this approach. Suppose that $\bm{z}$ and $\bm{z}_m$ indicate the \emph{subtype} that the individual belongs to for a given marker sequence. Subtypes are discrete subpopulations with distinct mean outcome trajectories. This is effectively a mixture model over longitudinal trajectories. The likelihood of observed marker sequences are entirely dependent on the marker-specific subtype, but there is an unknown dependency structure across outcome subtypes. Because the latent variables in this model are discrete, we can, in principle, parameterize the joint distribution $p(\bm{z}, \bm{z}_{1:M})$ as a saturated categorical distribution over all possible subtype combinations. This requires a number of parameters that is exponential in the number of longitudinal outcomes, however, and it will be difficult to reliably estimate them.
+The computational complexity of inference in the model depends how $\bm{w}^\T g(\bm{z}, \bm{z}_{1:M})$ factorizes (the log-likelihood terms in the exponential are single-variable factors and so are easily handled). \textbf{The key idea of this formulation is that the \emph{compatibility function} will be more robust to misspecification when trained using the conditional formulation above than if it were trained using a generative criterion}. A separate set of parameters $\bm{w}$ will be learned for each desired prediction time $t$ so that the empirical distribution over histories used when training the model matches the conditions under which it will be deployed.
+
+\subsection{Fitting the Model}
+
+We fit the model using penalized maximum likelihood. The model is fit for a specific time point $t$. The objective function is:
+\begin{align}
+\Phi_{\text{PML}}(\bm{w}) = 
+	\frac{1}{N} \sum_{i=1}^N \log p_{\bm{w}}( \bm{z}^i_* \given \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] ) - \frac{\lambda}{2} \| \bm{w} \|^2_2.
+\end{align}
+Define
+\begin{align}
+Z(\bm{w})
+	&= \sum_{\bm{z} = 1}^K \sum_{\bm{z}_{1:M}}
+		\exp \left\{ \log p(\bm{y}[\le t] \given \bm{z}) + \sum_{m=1}^M \log p(\bm{y}_m[\le t] \given \bm{z}_m) + \bm{w}^\T g(\bm{z}, \bm{z}_{1:M}) \right\} \\
+	&= \sum_{\bm{z} = 1}^K \sum_{\bm{z}_{1:M}}
+		e^{\ell^t(\bm{z}) + \sum_{m=1}^M \ell^t_m(\bm{z}_m) + \bm{w}^\T g(\bm{z}, \bm{z}_{1:M})}
+	= \sum_{\bm{z} = 1}^K Z(\bm{z}, \bm{w}).
+\end{align}
+then the log-likelihood term for individual $i$ is:
+\begin{align}
+\log p_{\bm{w}}( \bm{z}^i_* \given & \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] ) = \log Z(\bm{z}^i_*, \bm{w}) - \log Z(\bm{w}).
+\end{align}
+The gradient of the log likelihood for individual $i$ with respect to $\bm{w}$ is therefore
+\begin{align}
+\nabla_{\bm{w}} \log p_{\bm{w}}( \bm{z}^i_* \given \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] )
+	&= \nabla_{\bm{w}} \log Z(\bm{z}^i_*, \bm{w}) - \log \nabla_{\bm{w}} Z(\bm{w}).
+\end{align}
+We first compute the gradient with respect to $\log Z(\bm{z}^i_*, \bm{w})$.
+\begin{align}
+\nabla_{\bm{w}} \log Z(\bm{z}^i_*, \bm{w})
+	&= \frac{1}{Z(\bm{z}^i_*, \bm{w})}
+		 \sum_{\bm{z}_{1:M}}
+		 	e^{\ell^t(\bm{z}) + \sum_{m=1}^M \ell^t_m(\bm{z}_m) + \bm{w}^\T g(\bm{z}, \bm{z}_{1:M})} g(\bm{z}^i_*, \bm{z}_{1:M}) \\
+	&= \E_{\bm{w}} \left[ g(\bm{z}^i_*, \bm{Z}_{1:M}) \given \bm{z}^i_*, \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] \right].
+\end{align}
+Similarly, the gradient with respect to $\log Z(\bm{w})$ is:
+\begin{align}
+\nabla_{\bm{w}} \log Z(\bm{w})
+	&= \frac{1}{Z(\bm{w})} \sum_{\bm{z} = 1}^K \sum_{\bm{z}_{1:M}}
+		e^{\ell^t(\bm{z}) + \sum_{m=1}^M \ell^t_m(\bm{z}_m) + \bm{w}^\T g(\bm{z}, \bm{z}_{1:M})} g(\bm{z}, \bm{z}_{1:M}) \\
+	&= \E_{\bm{w}} \left[ g(\bm{Z}^i, \bm{Z}^i_{1:M}) \given \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] \right].
+\end{align}
+The objective function therefore has the following gradient with respect to $\bm{w}$:
+\begin{align}
+\nabla_{\bm{w}} \Phi_{\text{PML}} & (\bm{w}) = \\
+	&\frac{1}{N} \sum_{i=1}^N \E_{\bm{w}} \left[ g(\bm{z}^i_*, \bm{Z}_{1:M}) \given \bm{z}^i_*, \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] \right] \\
+	&- \frac{1}{N} \sum_{i=1}^N \E_{\bm{w}} \left[ g(\bm{Z}^i, \bm{Z}^i_{1:M}) \given \bm{y}^i[\le t], \bm{y}^i_{1:M}[\le t] \right] \\
+	&- \lambda \bm{w}
+\end{align}
+We see that the key computational step in computing the gradient is computing the expectation of the feature vector under the current set of parameters. The number of terms in the sum of the expectation is exponential in the number of auxiliary markers, and so it is important that $g(\bm{z}, \bm{z}_{1:M})$ factorizes in a way that allows us to effectively use dynamic programming.
+
+%The generative approach therefore naturally solves the challenge of missing data, but the issue of specifying the relationship between the latent variables remains (i.e. choosing the forms of the distributions $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$). To resolve this issue, we take an approach wherein we estimate the components of Equation \ref{eq:joint-latent-variable-conditional} using two separate procedures. First, the parameters of the conditional distributions of the observed measurements given the latent variables are estimated using a generative criterion. Second, the parameters of $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$ are estimated by maximizing a discriminative objective. \textbf{The primary motivation for this approach is that a misspecification of the distributions over the latent variables will be less harmful if estimated discriminatively than if they are estimated in a generative criterion.} Before describing the proposed approach, we draw connections between previously explored methods of adjustment and the ideas presented above.
+
+\section{Connections to Previous Methods}
+
+We have explored two approaches that fit within the conceptual framework of estimating the left hand side of Equation \ref{eq:target-latent-variable-predictive}. In the first approach, we additively adjust the single-marker model posterior over the target latent variables $\bm{z}$:
+\begin{align}
+\label{eq:single-marker-posterior}
+p(\bm{z} \given \bm{y}[\le t]) \propto p(\bm{y}[\le t] \given \bm{z}) p(\bm{z}).
+\end{align}
+In this approach, we assume that the latent variable $\bm{z}$ is a single categorical outcome taking values in $\{1, \ldots, K\}$. We parameterize the adjustment by first casting the single-marker posterior in Equation \ref{eq:single-marker-posterior} as a multinomial logistic regression model. In multinomial logistic regression, we predict a probability distribution over $K$ outcomes by transforming a set of scores $\{s_1, \ldots, s_K\}$ using the softmax function. the estimated probability of outcome $\bm{z} = k$ is then:
+\begin{align}
+p(\bm{z} = k) = \frac{e^{s_k}}{\sum_{k' = 1}^K e^{s_{k'}}}.
+\end{align}
+The single-marker posterior can be reformulated in terms of these scores. We have that
+\begin{align}
+p(\bm{z} = k \given \bm{y}[\le t])
+	&= \frac{p( \bm{y}[\le t] \given \bm{z} = k ) p( \bm{z} = k ) }{ \sum_{k' = 1}^K p( \bm{y}[\le t] \given \bm{z} = k' ) p( \bm{z} = k' ) } \\
+	&= \frac{ e^{\log p( \bm{y}[\le t] \given \bm{z} = k ) + \log p( \bm{z} = k )} }{ \sum_{k' = 1}^K e^{ \log p( \bm{y}[\le t] \given \bm{z} = k' ) + \log p( \bm{z} = k' )} }.
+\end{align}
+We therefore have that
+\begin{align}
+	s_{ik} = \log p(\bm{y}^i[\le t] \given \bm{z}^i = k) + \log p(\bm{z}^i = k).
+\end{align}
+Assuming that the single-marker generative model on the right hand side of Equation \ref{eq:single-marker-posterior} is correct and given only the previously observed measurements of the target process $\bm{y}^i[\le t]$, choosing the subtype with the maximum score (i.e. $\argmax_k s_{ik}$) gives the Bayes' optimal decision rule for 0-1 loss. Once we condition on the observed measurements from the auxiliary processes, however, these scores are no longer optimal. One strategy for accounting for the new evidence is to adjust these scores.
+
+\paragraph{Method 1.}
+In Method 1 we adjust the scores additively
+\begin{align}
+\label{eq:method-1-scores}
+s'_{ik} = s_{ik} + \sum_{m=1}^M \bm{\theta}_m^\T \E[ \phi(k, \bm{Z}^i_m) \given \bm{y}^i_m ].
+\end{align}
+These scores comprise a multinomial log-linear model over target latent variables. There are two key elements to note here. First, only pairwise interactions between the target latent variable and each auxiliary latent variable are included in the model. Second, we use the expected value of the feature function $\phi(k, \bm{Z}^i_m)$ taken with respect to the posterior given $\bm{y}^i_m$ using the auxiliary marker's marginal model (that is, the joint distribution over measurements and latent variables trained in isolation). Note that the expectation is assumed to be independent of the target latent variable $\bm{z}^i$ and all other auxiliary random variables $\bm{z}^i_{m'}$ for $m' \neq m$.
+
+\paragraph{Method 2.}
+In Method 2, we train $M$ separate conditional models using scores identical to the components of the sum in Equation \ref{eq:method-1-scores}. We combine the single-marker posterior (Eq. \ref{eq:single-marker-posterior}) and the $M$ additional conditional models in a mixture to produce the adjusted posterior probabilities over target latent variables. The scores for each of the $M$ separate conditional models are parameterized as:
+\begin{align}
+_m s'_{ik} = \bm{\theta}_m^\T \E[ \phi(k, \bm{Z}^i_m) \given \bm{y}^i_m ].
+\end{align}
+In this case, we see that the expectation depends only on $\bm{y}^i_m$ and so the model makes the implicit assumption that $\bm{z}^i_m$ is independent of $\bm{z}^i$ given $\bm{y}^i_m$. In contrast to Method 1, however, it does not make the assumption that $\bm{z}^i_m$ is independent of $\bm{y}^i_{m'}$ for $m' \neq m$. This assumption is not made because the $M$ models are trained independently (that is, not conditioned on the measurements from other auxiliary markers). The probability of the target latent variable given $\bm{y}^i_m$ is then:
+\begin{align}
+p(\bm{z}^i = k \given \bm{y}^i_m) = \frac{e^{_m s'_{ik}}}{\sum_{k'=1}^M e^{_m s'_{ik}}}.
+\end{align}
+The $M$ models are trained independently. Given the parameters for each of the models, the weights $\bm{\pi}$ are fit to maximize the likelihood of the MAP configuration of the latent variables are fit using maximum likelihood estimate, which produces the final estimate:
+\begin{align}
+p( \bm{z}^i = k \given \bm{y}^i, \bm{y}^i_{1:M} ) =
+	\underbrace{\bm{\pi}[1] p(\bm{z}^i = k \given \bm{y}^i)}_{\text{original posterior}} +
+	\sum_{m=1}^M
+		\underbrace{\bm{\pi}[m + 1] p( \bm{z}^i = k \given \bm{y}^i_m )}_{\text{independent auxiliary predictions}}.
+\end{align}
 
 \section{Related Work}
 
@@ -140,101 +229,128 @@ The dominant approach to modeling longitudinal data is the mixed effects or hier
 
 Recently, there has been increased interest in jointly modeling multiple longitudinal outcomes (see e.g.~\cite{Verbeke2014-cs,Fieuws2007-qo} for recent reviews). A common approach to jointly modeling longitudinal outcomes builds on the single-outcome mixed effects model. Each longitudinal outcome has a population mean trajectory and individuals have latent variables for each outcome that adjust the population trajectory. The dependence across outcomes is then determined by a joint distribution over the latent variables from each longitudinal process. This approach, while flexible, leads to complex models that are difficult to estimate. One can simplify the model by carefully designing the dependency structure across markers, but this requires a detailed understanding of the underlying phenomenon, which may not always be available. Another approach is to use latent class models (e.g.~\cite{Putter2008-gx}), which can reduce the number of parameters while still maintaining a relatively flexible dependency structure. \textbf{When we are interested only in using other longitudinally measured outcomes to improve predictions about a target outcome (e.g. PFVC), we suspect that assumptions about cross-outcome dependencies can be minimized because we are not seeking to describe the full generative process.} This note sketches a conceptual argument for two of methods for training online adjustments of a generative model to improve predictive accuracy of future longitudinal trajectories. 
 
-\section{Methods}
-
-Our goal is to learn how to adjust posterior predictions given partial trajectories so that they more closely match the posteriors we observe given full trajectories. Let $\bm{P}$ denote the $N \times K$ matrix containing the posterior probabilities produced by the model given full trajectories. Each row $i$ of $\bm{P}$ contains the posterior probabilities of individual $i$ belonging to each subtype---the posterior probability that $i$ belongs to subtype $k$ is denoted $\bm{P}[i,k]$. Similarly, let $\bm{P}\psup{t}$ denote the matrix of posterior probabilities estimated after observing $t$ years of data.
-
-To measure the discrepancy two sets of posterior probabilities $\bm{P}$ and $\bm{Q}$, we use the average cross entropy (also known as perplexity).
-\begin{align}
-L(\bm{P}, \bm{Q}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{Q}[i,k].
-\end{align}
-If $\bm{P}$ is the ``truth'' and $\bm{Q}$ is some estimate of $\bm{P}$, then the cross entropy will be small if $\bm{Q}$ is a good approximation of $\bm{P}$. Note that the cross entropy loss is bounded from below by the average entropy of $\bm{P}$:
-\begin{align}
-L(\bm{P}, \bm{P}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{P}[i,k].
-\end{align}
-
-As we observe more data, the cross entropy between $\bm{P}$ and $\bm{P}\psup{t}$ will naturally decrease and eventually reach the lower bound once all data is observed. Our goal is to learn a model for producing an improved estimate $\bm{Q}$ that speeds up convergence to the lower bound. The key idea is to discriminately train a model at a given time instead of simply relying on the posterior probability under the generative model that was learned using complete trajectories.
-
-\section{Posterior Probability Scores}
-
-We first introduce the notion of scores, which are combined through the softmax function to create a probability distribution over outcomes. Let $s_{ik}$ denote the score indicating the compatibility between individual $i$ and subtype $k$, then we can produce a probability distribution over subtypes using the softmax function:
-\begin{align}
-Q_{ik} = \frac{ e^{s_{ik}} }{\sum_{k'=1}^K e^{s_{ik'}} }.
-\end{align}
-As is, this expression is under-constrained. We can obtain the same probability $\bm{Q}[i,k]$ by adding a constant to each of the scores. For this reason, we typically choose a \emph{pivot class} and constrain the score between each individual and the pivot class to be $0$. In this work, we will always use the first class (or subtype) as the pivot. After introducing this constraint, we can interpret the scores as representing the difference between each of the original scores and the score of the pivot class. Let $d_{ik}$ denote the constrained scores, then we have:
-\begin{align}
-d_{i1} &= s_{i1} - s_{i1} = 0 \\
-d_{i2} &= s_{i2} - s_{i1}     \\
-       &\vdots                \\
-d_{iK} &= s_{iK} - s_{i1}.
-\end{align}
-Our model will therefore predict the differences between the scores of the $K - 1$ classes and the pivot class.
-
-In the unadjusted case (i.e. when using the partial information posterior probabilities $\bm{P}\psup{t}$), the probabilities are computed as
-\begin{align}
-P_{ik} = \frac{p( y_i\psup{t} \given z_i = k ) p( z_i = k ) }
-			        { \sum_{k' = 1}^K p( y_i\psup{t} \given z_i = k' ) p( z_i = k' ) }.
-\end{align}
-By rewriting the expression for the posterior, we can obtain expressions for the scores associated with the generative model. First, by taking the log and exponential of the joint distribution we have:
-\begin{align}
-P_{ik} = \frac{ e^{\log p( y_i\psup{t} \given z_i = k ) + \log p( z_i = k )} }
-			        { \sum_{k' = 1}^K e^{ \log p( y_i\psup{t} \given z_i = k' ) + \log p( z_i = k' )} }.
-\end{align}
-We see that for the generative model, the unconstrained scores $s_{ik}$ are the log of the joint probability distribution over marker values and subtypes. By converting to the constrained scores $d_{ik}$, we see that
-\begin{align}
-d_{i1} &= \log \frac{p( y_i\psup{t} \given z_i = 1 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 1 )}{p( z_i = 1 )} = 0 \\
-d_{i2} &= \log \frac{p( y_i\psup{t} \given z_i = 2 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 2 )}{p( z_i = 1 )}     \\
-       &\vdots                                                                                                                      \\
-d_{iK} &= \log \frac{p( y_i\psup{t} \given z_i = K )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = K )}{p( z_i = 1 )}
-\end{align}
-The algorithms we propose in this note will seek to modify these scores using information from auxiliary markers---other longitudinally measured markers that are observed over the course of care.
-
-\section{Method 1}
-
-\textbf{This method does not work well, so the reader can skip to Method 2.}
-The first method modifies the constrained scores additively using features extracted from auxiliary marker streams. The features we use are obtained by computing posterior probabilities over subtypes. In the case of auxiliary markers, the subtypes are separate from the target marker's subtypes---we fit a subtype model for each auxiliary marker independently from the target marker. Let $M$ denote the number of auxiliary marker types available. For each auxiliary marker $m$, we estimate a subtype model with $K_m$ subtypes. Let $\bm{X}_m\psup{t}$ denote the $N \times K_m$ matrix of posterior probabilities over auxiliary subtypes for marker $m$ using data up until time $t$. We adjust the constrained scores using
-\begin{align}
-d^*_{ik} = d_{ik} + \sum_{m=1}^M \sum_{k'=1}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m[i,k'].
-\end{align}
-The posterior probabilities can be thought of as soft dummy encodings of a categorical feature (i.e. which subtype the individual belongs to for a given auxiliary marker). The coefficients $\bm{\theta}_{km}[k']$ can be approximately interpreted as the log ratio of the probability of the individual being in auxiliary subtype $k'$ if in target subtype $k$ and $1$. In other words, if a given auxiliary subtype is much more or much less prevalent in target subtype $k$ than in target subtype $1$ (the pivot), then the corresponding coefficient will have large absolute value (this is not entirely accurate, however, because the weights are trained discriminatively). The parameters $\bm{\theta}_{km}$ are estimated by minimizing the cross entropy loss. This is done using the same gradient based methods used to fit multinomial logistic regression (softmax) classifiers. Note that the original log-likelihood ratio $d_{ik}$ is unchanged in the learning procedure.
-
-One issue with this approach is that there are many features to estimate---a total of $K ( \sum_{m=1}^M K_m )$. We can reduce the number of parameters by noting that there may be many auxiliary subtypes that appear at comparable frequencies in target subtype $k$ and the pivot target subtype. We select which features to include in the model using a two-sided t-test of the difference between the probability of an auxiliary subtype under target subtype $k$ and target subtype $1$. Given a significance level $\alpha$, we include the feature if the difference in probabilities is statistically significant. This approach is meant as a heuristic; a more principled approach would use a proper regularizer such as the $L1$ penalty.
-
-\section{Method 2}
-
-The second method does not attempt to modify the posterior scores of the generative model. Instead, it leverages additional probabilistic models of an individual's subtype to create a new posterior distribution over subtypes. The new posterior is formed by averaging across the collection of models. The partial trajectory posteriors $\bm{P}\psup{t}$ obtained from the generative model are always included as the first model. Models of an individual's subtype that leverage additional sources of information such as other longitudinally observed markers can be added to the ensemble. In this exposition, we will use other longitudinally observed markers (henceforth referred to as auxiliary markers). Let $M$ denote the number of auxiliary markers. For each of the $M$ auxiliary markers, we train an independent subtype model---that is, we choose the covariates, number of subtypes, and hyper-parameters to model the marginal of auxiliary trajectories. For each auxiliary marker $m$, let $K_m$ denote the number of subtypes selected. At a given time $t$, we will use these marginal auxiliary models to make posterior estimates of the auxiliary subtype, which are gathered into the $N \times K_m$ matrix $\bm{X}_m\psup{t}$. We will use these posterior probabilities as features to train $M$ separate multinomial regression models over the \emph{target} subtype. For each marker $m$, we estimate the $K - 1$ scores:
-\begin{align}
-d_{mik} = \bm{\theta}_{km}[1] + \sum_{k'=2}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m\psup{t}[i,k'].
-\end{align}
-Note that the posterior probability of the first auxiliary subtype is not included in the model. If we did not remove it, the linear combination would be over-determined (the posterior probabilities sum to 1 and are therefore not linearly independent of the intercept term). The parameters are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). Given the parameters, we can predict posterior probabilities $\bm{Q}_m\psup{t}$ using
-\begin{align}
-\bm{Q}_m\psup{t}[i,k] = \frac{e^{d_{mik}}}{\sum_{k'=1}^K e^{d_{mik'}}}.
-\end{align}
-Given all of the separate predictions, we linearly interpolate them using weights $\bm{\pi}$ to produce the final posterior probability estimate:
-\begin{align}
-\bm{P}^* = \bm{\pi}[1] \bm{P}\psup{t} + \sum_{m=1}^M \bm{\pi}[m+1] \bm{Q}_m\psup{t}.
-\end{align}
-
-The interpolation weights are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). To avoid overfitting, this loss should be minimized on a held-out set of data because we want weights that will generalize to making predictions about posteriors that were not used to train the models in the ensemble. The interpolation weights are parameterized using $M$ real values $\nu_m \in \R$, which are passed through the softmax function to obtain the interpolation weights:
-\begin{align}
-\bm{\pi}(\vec{\nu})[1] &= \frac{1}{1 + \sum_{m'=1}^M e^{\nu_{m'}}} \\
-\bm{\pi}(\vec{\nu})[m + 1] &= \frac{e^{\nu_m}}{1 + \sum_{m' = 1}^M e^{\nu_{m'}}}.
-\end{align}
-Let $z_i$ be the MAP estimate according to the full information posterior $\bm{P}$ for individual $i$; i.e. $\bm{P}[i, z_i] \ge \bm{P}[i, z']$ for $z' \neq z_i$. We optimize the interpolation parameters by minimizing the log loss:
-\begin{align}
-J(\vec{\nu}) &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \bm{P}^*[i, z_i] \\
-             \nonumber
-             &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \left( \bm{\pi}(\vec{\nu})[1] \bm{P}\psup{t}[i, z_i] + \sum_{m=1}^M \bm{\pi}(\vec{\nu})[m + 1] \bm{Q}_m\psup{t}[i, z_i] \right).
-\end{align}
-We minimize this loss using the \texttt{BFGS} algorithm.
-
-\section{Next Steps}
-
-\begin{itemize}
-\item Separate the prior- and likelihood-based predictions terms in the interpolation.
-\item Other classifiers? Can we build features from the patient history to build a predictive model? I.e. how many clinical visits, how many ECHO visits, how many PFTs, which meds, etc.?
-\item Learning conditional interpolation weights? I.e. parameterize the softmax with features?
-\end{itemize}
+%\section{Analysis of Single-Marker Posterior Errors}
+%
+%This section describes the types of errors made by single-marker posterior predictions. The purpose is to understand specifically what must be fixed and to construct a list of possible adjustments that might address the issues identified.
+%
+%\section{Methods}
+%
+%Our goal is to avoid the challenge of correctly specifying the joint distribution over the latent variables, and instead learn an approximation that still allows information to be transferred from auxiliary longitudinal measurements to the predictive distribution over the target measurements. We do this by first learning separate generative models for each of the longitudinal processes. For the target outcome and each auxiliary outcome, we estimate the parameters of:
+%\begin{align}
+%p(\bm{y} \given \bm{z}) p(\bm{z}).
+%\end{align}
+%Learning the parameters of this model will give us unbiased estimates of the parameters of the likelihood $p(\bm{y} \given \bm{z})$ for both the target and auxiliary longitudinal outcomes. The marginal of $p(\bm{z})$ may also be of interest, but we will not use it to compute the conditional distribution over the target latent variables given some observed measurements (Eq. \ref{eq:simplified-posterior}) because we would be making the strong assumption that the latent variables across markers are independent. Instead, we will estimate the distributions $p(\bm{z} \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$ directly by maximizing a discriminative criterion.
+%\begin{align}
+%\label{eq:objective}
+%J =
+%\sum_{i=1}^N \log \left(
+%	\sum_{\bm{z}_{1:M}} p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) p(\bm{z}_{1:M})
+%\right).
+%\end{align}
+%We maximize the objective with respect to the conditional distribution \mbox{$p(\bm{z} \given \bm{z}_{1:M})$} and $p(\bm{z}_{1:M})$. The key idea is that we can choose approximations to these distributions whose parameters are maximized according to the discriminative criterion in Equation \ref{eq:objective}. The parameters will therefore be chosen in a way that best transfers information from the auxiliary markers to the target latent variables for the purpose of prediction. We first lower bound the objective using Jensen's inequality
+%\begin{align}
+%J &\ge \sum_{i=1}^N \sum_{\bm{z}_{1:M}} p(\bm{z}_{1:M}) \log \left( p(\bm{z} \given \bm{z}_{1:M}) \prod_{m=1}^M p(\bm{y}_m \given \bm{z}_m) \right) \\
+%	&= \sum_{i=1}^N \E[\log p(\bm{z} \given \bm{Z}_{1:M})] + \sum_{m=1}^M \E[\log p(\bm{y}_m \given \bm{Z}_m)].
+%\end{align}
+%We can then maximize this lower bound with respect to the parameters of $p(z \given \bm{z}_{1:M})$ and $p(\bm{z}_{1:M})$.
+%
+%For the sake of concreteness, we work out an example application of this approach. Suppose that $\bm{z}$ and $\bm{z}_m$ indicate the \emph{subtype} that the individual belongs to for a given marker sequence. Subtypes are discrete subpopulations with distinct mean outcome trajectories. This is effectively a mixture model over longitudinal trajectories. The likelihood of observed marker sequences are entirely dependent on the marker-specific subtype, but there is an unknown dependency structure across outcome subtypes. Because the latent variables in this model are discrete, we can, in principle, parameterize the joint distribution $p(\bm{z}, \bm{z}_{1:M})$ as a saturated categorical distribution over all possible subtype combinations. This requires a number of parameters that is exponential in the number of longitudinal outcomes, however, and it will be difficult to reliably estimate them.
+%
+%
+%\section{Methods}
+%
+%Our goal is to learn how to adjust posterior predictions given partial trajectories so that they more closely match the posteriors we observe given full trajectories. Let $\bm{P}$ denote the $N \times K$ matrix containing the posterior probabilities produced by the model given full trajectories. Each row $i$ of $\bm{P}$ contains the posterior probabilities of individual $i$ belonging to each subtype---the posterior probability that $i$ belongs to subtype $k$ is denoted $\bm{P}[i,k]$. Similarly, let $\bm{P}\psup{t}$ denote the matrix of posterior probabilities estimated after observing $t$ years of data.
+%
+%To measure the discrepancy two sets of posterior probabilities $\bm{P}$ and $\bm{Q}$, we use the average cross entropy (also known as perplexity).
+%\begin{align}
+%L(\bm{P}, \bm{Q}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{Q}[i,k].
+%\end{align}
+%If $\bm{P}$ is the ``truth'' and $\bm{Q}$ is some estimate of $\bm{P}$, then the cross entropy will be small if $\bm{Q}$ is a good approximation of $\bm{P}$. Note that the cross entropy loss is bounded from below by the average entropy of $\bm{P}$:
+%\begin{align}
+%L(\bm{P}, \bm{P}) = - N^\I \sum_{i=1}^N \sum_{k=1}^K \bm{P}[i,k] \log \bm{P}[i,k].
+%\end{align}
+%
+%As we observe more data, the cross entropy between $\bm{P}$ and $\bm{P}\psup{t}$ will naturally decrease and eventually reach the lower bound once all data is observed. Our goal is to learn a model for producing an improved estimate $\bm{Q}$ that speeds up convergence to the lower bound. The key idea is to discriminately train a model at a given time instead of simply relying on the posterior probability under the generative model that was learned using complete trajectories.
+%
+%\section{Posterior Probability Scores}
+%
+%We first introduce the notion of scores, which are combined through the softmax function to create a probability distribution over outcomes. Let $s_{ik}$ denote the score indicating the compatibility between individual $i$ and subtype $k$, then we can produce a probability distribution over subtypes using the softmax function:
+%\begin{align}
+%Q_{ik} = \frac{ e^{s_{ik}} }{\sum_{k'=1}^K e^{s_{ik'}} }.
+%\end{align}
+%As is, this expression is under-constrained. We can obtain the same probability $\bm{Q}[i,k]$ by adding a constant to each of the scores. For this reason, we typically choose a \emph{pivot class} and constrain the score between each individual and the pivot class to be $0$. In this work, we will always use the first class (or subtype) as the pivot. After introducing this constraint, we can interpret the scores as representing the difference between each of the original scores and the score of the pivot class. Let $d_{ik}$ denote the constrained scores, then we have:
+%\begin{align}
+%d_{i1} &= s_{i1} - s_{i1} = 0 \\
+%d_{i2} &= s_{i2} - s_{i1}     \\
+%       &\vdots                \\
+%d_{iK} &= s_{iK} - s_{i1}.
+%\end{align}
+%Our model will therefore predict the differences between the scores of the $K - 1$ classes and the pivot class.
+%
+%In the unadjusted case (i.e. when using the partial information posterior probabilities $\bm{P}\psup{t}$), the probabilities are computed as
+%\begin{align}
+%P_{ik} = \frac{p( y_i\psup{t} \given z_i = k ) p( z_i = k ) }
+%			        { \sum_{k' = 1}^K p( y_i\psup{t} \given z_i = k' ) p( z_i = k' ) }.
+%\end{align}
+%By rewriting the expression for the posterior, we can obtain expressions for the scores associated with the generative model. First, by taking the log and exponential of the joint distribution we have:
+%\begin{align}
+%P_{ik} = \frac{ e^{\log p( y_i\psup{t} \given z_i = k ) + \log p( z_i = k )} }
+%			        { \sum_{k' = 1}^K e^{ \log p( y_i\psup{t} \given z_i = k' ) + \log p( z_i = k' )} }.
+%\end{align}
+%We see that for the generative model, the unconstrained scores $s_{ik}$ are the log of the joint probability distribution over marker values and subtypes. By converting to the constrained scores $d_{ik}$, we see that
+%\begin{align}
+%d_{i1} &= \log \frac{p( y_i\psup{t} \given z_i = 1 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 1 )}{p( z_i = 1 )} = 0 \\
+%d_{i2} &= \log \frac{p( y_i\psup{t} \given z_i = 2 )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = 2 )}{p( z_i = 1 )}     \\
+%       &\vdots                                                                                                                      \\
+%d_{iK} &= \log \frac{p( y_i\psup{t} \given z_i = K )}{p( y_i\psup{t} \given z_i = 1 )} + \log \frac{p( z_i = K )}{p( z_i = 1 )}
+%\end{align}
+%The algorithms we propose in this note will seek to modify these scores using information from auxiliary markers---other longitudinally measured markers that are observed over the course of care.
+%
+%\section{Method 1}
+%
+%The first method modifies the constrained scores additively using features extracted from auxiliary marker streams. The features we use are obtained by computing posterior probabilities over subtypes. In the case of auxiliary markers, the subtypes are separate from the target marker's subtypes---we fit a subtype model for each auxiliary marker independently from the target marker. Let $M$ denote the number of auxiliary marker types available. For each auxiliary marker $m$, we estimate a subtype model with $K_m$ subtypes. Let $\bm{X}_m\psup{t}$ denote the $N \times K_m$ matrix of posterior probabilities over auxiliary subtypes for marker $m$ using data up until time $t$. We adjust the constrained scores using
+%\begin{align}
+%d^*_{ik} = d_{ik} + \sum_{m=1}^M \sum_{k'=1}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m[i,k'].
+%\end{align}
+%The posterior probabilities can be thought of as soft dummy encodings of a categorical feature (i.e. which subtype the individual belongs to for a given auxiliary marker). The coefficients $\bm{\theta}_{km}[k']$ can be approximately interpreted as the log ratio of the probability of the individual being in auxiliary subtype $k'$ if in target subtype $k$ and $1$. In other words, if a given auxiliary subtype is much more or much less prevalent in target subtype $k$ than in target subtype $1$ (the pivot), then the corresponding coefficient will have large absolute value (this is not entirely accurate, however, because the weights are trained discriminatively). The parameters $\bm{\theta}_{km}$ are estimated by minimizing the cross entropy loss. This is done using the same gradient based methods used to fit multinomial logistic regression (softmax) classifiers. Note that the original log-likelihood ratio $d_{ik}$ is unchanged in the learning procedure.
+%
+%One issue with this approach is that there are many features to estimate---a total of $K ( \sum_{m=1}^M K_m )$. We can reduce the number of parameters by noting that there may be many auxiliary subtypes that appear at comparable frequencies in target subtype $k$ and the pivot target subtype. We select which features to include in the model using a two-sided t-test of the difference between the probability of an auxiliary subtype under target subtype $k$ and target subtype $1$. Given a significance level $\alpha$, we include the feature if the difference in probabilities is statistically significant. This approach is meant as a heuristic; a more principled approach would use a proper regularizer such as the $L1$ penalty.
+%
+%\section{Method 2}
+%
+%The second method does not attempt to modify the posterior scores of the generative model. Instead, it leverages additional probabilistic models of an individual's subtype to create a new posterior distribution over subtypes. The new posterior is formed by averaging across the collection of models. The partial trajectory posteriors $\bm{P}\psup{t}$ obtained from the generative model are always included as the first model. Models of an individual's subtype that leverage additional sources of information such as other longitudinally observed markers can be added to the ensemble. In this exposition, we will use other longitudinally observed markers (henceforth referred to as auxiliary markers). Let $M$ denote the number of auxiliary markers. For each of the $M$ auxiliary markers, we train an independent subtype model---that is, we choose the covariates, number of subtypes, and hyper-parameters to model the marginal of auxiliary trajectories. For each auxiliary marker $m$, let $K_m$ denote the number of subtypes selected. At a given time $t$, we will use these marginal auxiliary models to make posterior estimates of the auxiliary subtype, which are gathered into the $N \times K_m$ matrix $\bm{X}_m\psup{t}$. We will use these posterior probabilities as features to train $M$ separate multinomial regression models over the \emph{target} subtype. For each marker $m$, we estimate the $K - 1$ scores:
+%\begin{align}
+%d_{mik} = \bm{\theta}_{km}[1] + \sum_{k'=2}^{K_m} \bm{\theta}_{km}[k'] \cdot \bm{X}_m\psup{t}[i,k'].
+%\end{align}
+%Note that the posterior probability of the first auxiliary subtype is not included in the model. If we did not remove it, the linear combination would be over-determined (the posterior probabilities sum to 1 and are therefore not linearly independent of the intercept term). The parameters are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). Given the parameters, we can predict posterior probabilities $\bm{Q}_m\psup{t}$ using
+%\begin{align}
+%\bm{Q}_m\psup{t}[i,k] = \frac{e^{d_{mik}}}{\sum_{k'=1}^K e^{d_{mik'}}}.
+%\end{align}
+%Given all of the separate predictions, we linearly interpolate them using weights $\bm{\pi}$ to produce the final posterior probability estimate:
+%\begin{align}
+%\bm{P}^* = \bm{\pi}[1] \bm{P}\psup{t} + \sum_{m=1}^M \bm{\pi}[m+1] \bm{Q}_m\psup{t}.
+%\end{align}
+%
+%The interpolation weights are learned by minimizing the log loss of predicting the most likely subtype according to $\bm{P}$ (the full posterior MAP). To avoid overfitting, this loss should be minimized on a held-out set of data because we want weights that will generalize to making predictions about posteriors that were not used to train the models in the ensemble. The interpolation weights are parameterized using $M$ real values $\nu_m \in \R$, which are passed through the softmax function to obtain the interpolation weights:
+%\begin{align}
+%\bm{\pi}(\vec{\nu})[1] &= \frac{1}{1 + \sum_{m'=1}^M e^{\nu_{m'}}} \\
+%\bm{\pi}(\vec{\nu})[m + 1] &= \frac{e^{\nu_m}}{1 + \sum_{m' = 1}^M e^{\nu_{m'}}}.
+%\end{align}
+%Let $z_i$ be the MAP estimate according to the full information posterior $\bm{P}$ for individual $i$; i.e. $\bm{P}[i, z_i] \ge \bm{P}[i, z']$ for $z' \neq z_i$. We optimize the interpolation parameters by minimizing the log loss:
+%\begin{align}
+%J(\vec{\nu}) &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \bm{P}^*[i, z_i] \\
+%             \nonumber
+%             &= - \sum_{i=1}^N \bm{P}[i, z_i] \log \left( \bm{\pi}(\vec{\nu})[1] \bm{P}\psup{t}[i, z_i] + \sum_{m=1}^M \bm{\pi}(\vec{\nu})[m + 1] \bm{Q}_m\psup{t}[i, z_i] \right).
+%\end{align}
+%We minimize this loss using the \texttt{BFGS} algorithm.
+%
+%\section{Next Steps}
+%
+%\begin{itemize}
+%\item Separate the prior- and likelihood-based predictions terms in the interpolation.
+%\item Other classifiers? Can we build features from the patient history to build a predictive model? I.e. how many clinical visits, how many ECHO visits, how many PFTs, which meds, etc.?
+%\item Learning conditional interpolation weights? I.e. parameterize the softmax with features?
+%\end{itemize}
 
 %\subsection{Results}
 %
