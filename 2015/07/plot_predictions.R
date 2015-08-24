@@ -2,6 +2,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(tidyr)
   library(readr)
+  library(stringr)
   library(ggplot2)
 })
 source("~/Git/nips15-model/functions.R")
@@ -58,17 +59,30 @@ for (i in seq_along(predictions)) {
 
   g <- predict_grid(data$datum[[i]], censor_time, m)
   w <- unlist(data[i, -c(1, 2, 3)])
-  x <- p$x
-  y <- p$y %*% w
-  prediction_grids[[i]] <- data.frame(ptid = data$datum[[i]]$ptid, x = x, yhat = y)
+  x <- g$x
+  rank <- order(w, decreasing=TRUE)
+  y1 <- g$y[, rank[1]]
+  w1 <- w[rank[1]]
+  y2 <- g$y[, rank[2]]
+  w2 <- w[rank[2]]
 
-  observations[[i]] <- data.frame(ptid = data$datum[[i]]$ptid, x = data$datum[[i]]$x, y = data$datum[[i]]$y)
+  pg0 <- data.frame(ptid = data$datum[[i]]$ptid, x = x, y = g$y %*% w, rank = "PP", weight = 1)
+  pg1 <- data.frame(ptid = data$datum[[i]]$ptid, x = x, y = y1, rank = "1", weight = w1)
+  pg2 <- data.frame(ptid = data$datum[[i]]$ptid, x = x, y = y2, rank = "2", weight = w2)
+  prediction_grids[[i]] <- rbind(pg0, pg1, pg2)
+
+  observations[[i]] <- data.frame(ptid = data$datum[[i]]$ptid, x = data$datum[[i]]$x, y = data$datum[[i]]$y, observed = data$datum[[i]]$x <= censor_time)
 }
 
 predictions <- do.call("rbind", predictions) %>% tbl_df
 prediction_grids <- do.call("rbind", prediction_grids) %>% tbl_df
 observations <- do.call("rbind", observations) %>% tbl_df
 
+bn <- basename(posteriors_file)
+fn <- str_replace(bn, "csv", "pdf")
+fn <- file.path("plots", fn)
+
+pdf(fn, width = 12, height = 9)
 chunk_size <- 25
 num_chunks <- ceiling(nrow(data) / chunk_size)
 for (chunk in 1:chunk_size) {
@@ -79,11 +93,12 @@ for (chunk in 1:chunk_size) {
   sub_obs <- filter(observations, ptid %in% sub_group)
 
   p <- ggplot() + xlim(0, 25) + ylim(0, 120)
-  p <- p + geom_line(aes(x, y), data = sub_grids)
-  p <- p + geom_point(aes(x, y), data = sub_obs)
+  p <- p + geom_line(aes(x, y, group = rank, color = rank, alpha = weight), data = sub_grids)
+  p <- p + geom_point(aes(x, y, color = observed), data = sub_obs)
   p <- p + facet_wrap(~ ptid)
   print(p)
 }
+dev.off()
 
 ## breaks <- c(1, 2, 4, 8, 25)
 ## breaks <- c(1, 2, 3, 4, 8, 25)

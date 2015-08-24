@@ -168,11 +168,65 @@ job_info <- list(
       max_iter     = 100,
       tol          = 1e-6
     )
-  )  ## End GI
+  ), ## End RP
+
+  list(
+    aux_marker = "msc",
+    marker_var = "muscle",
+    opts = c(
+      num_subtypes = 2L,
+      xlo          = 0,
+      xhi          = 25,
+      num_coef     = 3,
+      degree       = 1,
+      v_const      = 25.0,
+      v_ou         = 0.0,
+      l_ou         = 1.0,
+      v_noise      = 1.0,
+      max_iter     = 100,
+      tol          = 1e-6
+    )
+  ), ## End Muscle
+
+  list(
+    aux_marker = "kid",
+    marker_var = "kidney",
+    opts = c(
+      num_subtypes = 2L,
+      xlo          = 0,
+      xhi          = 25,
+      num_coef     = 3,
+      degree       = 1,
+      v_const      = 25.0,
+      v_ou         = 0.0,
+      l_ou         = 1.0,
+      v_noise      = 1.0,
+      max_iter     = 100,
+      tol          = 1e-6
+    )
+  ), ## End Kidney
+
+  list(
+    aux_marker = "wgt",
+    marker_var = "weight",
+    opts = c(
+      num_subtypes = 2L,
+      xlo          = 0,
+      xhi          = 25,
+      num_coef     = 3,
+      degree       = 1,
+      v_const      = 25.0,
+      v_ou         = 0.0,
+      l_ou         = 1.0,
+      v_noise      = 1.0,
+      max_iter     = 100,
+      tol          = 1e-6
+    )
+  )  ## End Weight
 
 )  ## End job info
 
-for (job in job_info[5]) {
+for (job in job_info) {
 
   aux_marker <- job$aux_marker
   marker_var <- job$marker_var

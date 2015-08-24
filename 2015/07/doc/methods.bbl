@@ -1,0 +1,38 @@
+\begin{thebibliography}{1}
+
+\bibitem{Diggle2002-tt}
+Peter Diggle, Patrick Heagerty, Kung-Yee Liang, and Scott Zeger.
+\newblock {\em Analysis of longitudinal data}.
+\newblock Oxford University Press, 2002.
+
+\bibitem{Fieuws2007-qo}
+S~Fieuws, Geert Verbeke, and G~Molenberghs.
+\newblock Random-effects models for multivariate repeated measures.
+\newblock {\em Statistical methods in medical research}, 16(5):387--397,
+  October 2007.
+
+\bibitem{Putter2008-gx}
+Hein Putter, Tineke Vos, Hanneke de~Haes, and Hans van Houwelingen.
+\newblock Joint analysis of multiple longitudinal outcomes: application of a
+  latent class model.
+\newblock {\em Statistics in medicine}, 27(29):6228--6249, 20~December 2008.
+
+\bibitem{Schulam2015-ah}
+Peter Schulam, Fredrick Wigley, and Suchi Saria.
+\newblock Clustering longitudinal clinical marker trajectories from electronic
+  health data: Applications to phenotyping and endotype discovery.
+\newblock In {\em {Twenty-Ninth} {AAAI} Conference on Artificial Intelligence}.
+  people.ee.duke.edu, 2015.
+
+\bibitem{Verbeke2014-cs}
+Geert Verbeke, Steffen Fieuws, Geert Molenberghs, and Marie Davidian.
+\newblock The analysis of multivariate longitudinal data: a review.
+\newblock {\em Statistical methods in medical research}, 23(1):42--59, February
+  2014.
+
+\bibitem{Yang2012-vg}
+Hongxia Yang, Fan Li, Enrique~F Schisterman, Sunni~L Mumford, and David Dunson.
+\newblock Bayesian inference on dependence in multivariate longitudinal data.
+\newblock 14~August 2012.
+
+\end{thebibliography}
